@@ -1,0 +1,222 @@
+/* ===== ProjectList ===== */
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.project-list__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 4px;
+}
+
+.project-list__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.project-list__add-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.project-list__add-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--accent);
+}
+
+.project-list__add-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Состояния списка */
+.project-list__loading {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+.project-list__spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.project-list__empty {
+  padding: 12px 8px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-list__empty p {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.project-list__create-hint {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 4px 0;
+  transition: color 0.15s;
+}
+
+.project-list__create-hint:hover {
+  color: var(--accent-hover);
+}
+
+/* ===== Элемент проекта ===== */
+.project-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  transition: background 0.12s;
+  width: 100%;
+  position: relative;
+}
+
+.project-item:hover {
+  background: var(--bg-card-hover);
+}
+
+.project-item--active {
+  background: var(--accent-dim);
+}
+
+.project-item--active:hover {
+  background: var(--accent-dim-hover);
+}
+
+.project-item--deleting {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.project-item__icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+
+  /* Активный — ярче */
+  .project-item--active & {
+    background: var(--accent);
+    color: #fff;
+  }
+}
+
+.project-item__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.project-item__name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-item__desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-item__spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ===== Контекстное меню ===== */
+.context-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 151;
+  background: #1e1230;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 6px;
+  min-width: 160px;
+  animation: fade-in 0.12s ease;
+}
+
+.context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+  width: 100%;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+.context-menu__item:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.context-menu__item--danger {
+  color: var(--status-failed);
+}
+
+.context-menu__item--danger:hover {
+  background: var(--status-failed-bg);
+  color: var(--status-failed);
+}
+
+.context-menu__item svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}

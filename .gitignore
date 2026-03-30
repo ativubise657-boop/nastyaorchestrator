@@ -1,0 +1,32 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+frontend/dist/
+
+# Data (runtime)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Env
+.env
+
+# Logs
+*.log
+/tmp/
+
+# OS
+Thumbs.db
+.gstack/
+portablenastyaorc/
+.DS_Store

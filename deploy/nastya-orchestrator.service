@@ -1,0 +1,48 @@
+[Unit]
+Description=Nastya Orchestrator Backend (FastAPI + uvicorn)
+Documentation=https://nr.gnld.ru
+After=network.target
+# Запускаться после nginx, но не зависеть от него жёстко
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=www-data
+Group=www-data
+
+# Рабочая директория — корень проекта на сервере
+WorkingDirectory=/opt/nastya-orch
+
+# Запуск uvicorn с одним воркером (CPU-задачи минимальны, I/O-bound)
+# --workers 1 — важно! Иначе SSE/события между воркерами не синхронизированы
+ExecStart=/opt/nastya-orch/venv/bin/uvicorn backend.main:app \
+    --host 127.0.0.1 \
+    --port 8781 \
+    --workers 1 \
+    --log-level info \
+    --access-log
+
+# Переменные окружения из файла
+EnvironmentFile=/opt/nastya-orch/.env
+
+# Перезапуск при ошибках (не при явном systemctl stop)
+Restart=on-failure
+RestartSec=5
+# Максимум 5 перезапусков за 2 минуты — защита от краш-петли
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+# Ограничения безопасности
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# Разрешить запись только в /opt/nastya-orch (данные проекта)
+ReadWritePaths=/opt/nastya-orch
+
+# Логирование через journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nastya-orch
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+{
+  "poll_interval": 5,
+  "heartbeat_interval": 30,
+  "task_timeout": 600,
+  "max_document_size_mb": 50,
+  "worker_stale_after_seconds": 90
+}
