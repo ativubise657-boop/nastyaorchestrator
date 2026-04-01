@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.core.config import APP_TITLE, APP_VERSION, CORS_ORIGINS, SERVE_STATIC
+from backend.core.config import APP_TITLE, APP_VERSION, BASE_DIR, CORS_ORIGINS, SERVE_STATIC
 from backend.core.state import State
 from backend.core.queue import TaskQueue
 
@@ -59,7 +59,12 @@ _DEFAULT_PROJECTS = [
     {"name": "parkcalc", "description": "Конструктор парков (React + Docker)", "path": "/mnt/d/Share/parkcalcdocker", "git_url": "https://github.com/Gypsea67/parkcalc.git"},
     {"name": "gypseaorchestrator", "description": "Gypsea Orchestrator (React + FastAPI)", "path": "/mnt/d/Share/gypseaorchestrator", "git_url": "https://github.com/Gypsea67/gypseaorchestrator.git"},
     {"name": "sparta", "description": "Sparta — МП агенты (Next.js + FastAPI)", "path": "/mnt/d/Share/gypseaclawsparta", "git_url": "https://github.com/Gypsea67/sparta.git"},
-    {"name": "nastyaorchestrator", "description": "Оркестратор Насти (FastAPI + React 19)", "path": "/mnt/d/Share/nastyaorc", "git_url": "https://github.com/Gypsea67/nastyaorchestrator.git"},
+    {
+        "name": "nastyaorchestrator",
+        "description": "Оркестратор Насти (FastAPI + React 19)",
+        "path": str(BASE_DIR),
+        "git_url": "https://github.com/ativubise657-boop/nastyaorchestrator.git",
+    },
 ]
 
 

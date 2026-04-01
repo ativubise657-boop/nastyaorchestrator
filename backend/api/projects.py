@@ -3,12 +3,15 @@ CRUD проектов + auto-clone из git_url.
 """
 import asyncio
 import logging
+import subprocess
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
+from backend.core.config import BASE_DIR
 from backend.models import Project, ProjectCreate, ProjectUpdate
 
 logger = logging.getLogger(__name__)
@@ -16,6 +19,8 @@ router = APIRouter()
 
 # Директория для клонированных репо
 REPOS_DIR = Path.home() / "repos"
+APP_PROJECT_NAME = "nastyaorchestrator"
+APP_RESTART_SCRIPT = BASE_DIR / "tools" / "restart-app.bat"
 
 
 def _inject_pat(git_url: str) -> str:
@@ -60,6 +65,107 @@ async def _clone_or_pull(git_url: str, name: str) -> str:
         logger.info("Клонирован %s → %s", name, repo_path)
 
     return str(repo_path)
+
+
+async def _run_command(*args: str, cwd: Path | None = None, timeout: int = 120) -> tuple[str, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        cwd=str(cwd) if cwd else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    stdout_text = stdout.decode(errors="replace").strip()
+    stderr_text = stderr.decode(errors="replace").strip()
+    if proc.returncode != 0:
+        raise RuntimeError(stderr_text or stdout_text or f"Command failed: {' '.join(args)}")
+    return stdout_text, stderr_text
+
+
+def _schedule_app_restart() -> bool:
+    if not APP_RESTART_SCRIPT.exists():
+        logger.warning("Restart script not found: %s", APP_RESTART_SCRIPT)
+        return False
+
+    subprocess.Popen(
+        ["cmd", "/c", f'start "" /min "{APP_RESTART_SCRIPT}"'],
+        cwd=str(BASE_DIR),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return True
+
+
+async def _update_local_app_repo(project_path: Path) -> dict:
+    if not (project_path / ".git").exists():
+        raise RuntimeError(f"Path is not a git repository: {project_path}")
+
+    status_out, _ = await _run_command(
+        "git",
+        "status",
+        "--porcelain",
+        "--untracked-files=no",
+        cwd=project_path,
+        timeout=60,
+    )
+    if status_out:
+        raise RuntimeError("Local changes detected. Commit or stash them before updating the app.")
+
+    branch_out, _ = await _run_command("git", "branch", "--show-current", cwd=project_path, timeout=60)
+    branch = branch_out or "master"
+    origin_out, _ = await _run_command("git", "remote", "get-url", "origin", cwd=project_path, timeout=60)
+    before_out, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
+
+    await _run_command("git", "fetch", "origin", branch, cwd=project_path, timeout=300)
+    pull_out, _ = await _run_command(
+        "git",
+        "pull",
+        "--ff-only",
+        "origin",
+        branch,
+        cwd=project_path,
+        timeout=300,
+    )
+    after_out, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
+
+    changed_files: list[str] = []
+    if before_out != after_out:
+        diff_out, _ = await _run_command(
+            "git",
+            "diff",
+            "--name-only",
+            before_out,
+            after_out,
+            cwd=project_path,
+            timeout=60,
+        )
+        changed_files = [line for line in diff_out.splitlines() if line.strip()]
+
+        if "requirements.txt" in changed_files:
+            await _run_command(sys.executable, "-m", "pip", "install", "-r", "requirements.txt", cwd=project_path, timeout=900)
+
+        frontend_dir = project_path / "frontend"
+        need_npm_install = (
+            not (frontend_dir / "node_modules").exists()
+            or "frontend/package.json" in changed_files
+            or "frontend/package-lock.json" in changed_files
+        )
+        if need_npm_install:
+            await _run_command("npm.cmd", "install", "--silent", cwd=frontend_dir, timeout=900)
+
+        await _run_command("npm.cmd", "run", "build", cwd=frontend_dir, timeout=900)
+
+    restarting = before_out != after_out and _schedule_app_restart()
+    return {
+        "updated": before_out != after_out,
+        "before_sha": before_out,
+        "after_sha": after_out,
+        "branch": branch,
+        "origin_url": origin_out,
+        "changed_files": changed_files,
+        "pull_output": pull_out,
+        "restarting": restarting,
+    }
 
 
 def _now_iso() -> str:
@@ -215,3 +321,35 @@ async def sync_repos(request: Request):
         except Exception as e:
             results.append({"name": row["name"], "status": "error", "error": str(e)})
     return {"synced": len([r for r in results if r["status"] == "ok"]), "results": results}
+
+
+@router.post("/{project_id}/update-app")
+async def update_app(project_id: str, request: Request):
+    state = request.app.state.db
+    row = state.fetchone("SELECT id, name FROM projects WHERE id = ?", (project_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Проект {project_id} не найден")
+
+    project = dict(row)
+    if project["name"] != APP_PROJECT_NAME:
+        raise HTTPException(status_code=400, detail="Обновление доступно только для приложения nastyaorchestrator")
+
+    try:
+        result = await _update_local_app_repo(BASE_DIR)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("App update failed")
+        raise HTTPException(status_code=500, detail=f"Не удалось обновить приложение: {exc}") from exc
+
+    return {
+        **result,
+        "project_path": str(BASE_DIR),
+        "message": (
+            "Приложение обновлено и перезапускается."
+            if result["restarting"]
+            else "Приложение уже на последней версии."
+            if not result["updated"]
+            else "Код обновлён, но автоперезапуск не сработал. Перезапусти приложение вручную."
+        ),
+    }

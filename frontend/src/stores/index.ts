@@ -8,6 +8,7 @@ export interface Project {
   name: string
   description: string
   path: string | null
+  git_url: string
   created_at: string
 }
 
@@ -144,6 +145,7 @@ interface AppStore {
   loadProjects: () => Promise<void>
   createProject: (data: CreateProjectData) => Promise<void>
   updateProject: (id: string, data: Partial<CreateProjectData>) => Promise<void>
+  updateApp: (id: string) => Promise<AppUpdateResult>
   deleteProject: (id: string) => Promise<void>
   selectProject: (id: string) => void
 
@@ -240,6 +242,18 @@ export interface StatuslineData {
   ts: number
 }
 
+export interface AppUpdateResult {
+  updated: boolean
+  restarting: boolean
+  message: string
+  project_path: string
+  branch: string
+  origin_url: string
+  before_sha: string
+  after_sha: string
+  changed_files: string[]
+}
+
 // ===== Zustand Store =====
 
 export const useStore = create<AppStore>((set, get) => ({
@@ -278,6 +292,12 @@ export const useStore = create<AppStore>((set, get) => ({
     set((state) => ({
       projects: state.projects.map((p) => (p.id === id ? updated : p)),
     }))
+  },
+
+  updateApp: async (id) => {
+    return apiFetch<AppUpdateResult>(`/api/projects/${id}/update-app`, {
+      method: 'POST',
+    })
   },
 
   deleteProject: async (id) => {
