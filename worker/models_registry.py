@@ -31,7 +31,7 @@ def get_model_id(short: str) -> str:
 
 def get_default_chat_model() -> str:
     """Короткое имя модели по умолчанию для чата."""
-    return _load().get("default_chat", "sonnet")
+    return _load().get("default_chat", "glm-5-turbo")
 
 
 def get_all_models() -> dict[str, str]:

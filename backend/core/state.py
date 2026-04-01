@@ -36,7 +36,7 @@ class State:
         project_id   TEXT NOT NULL,
         prompt       TEXT NOT NULL,
         mode         TEXT DEFAULT 'auto',
-        model        TEXT DEFAULT 'sonnet',
+        model        TEXT DEFAULT 'glm-5-turbo',
         status       TEXT DEFAULT 'queued',
         result       TEXT,
         error        TEXT,

@@ -154,7 +154,7 @@ export function useSSE() {
       }
     })
 
-    // Документ создан (Claude создал файл в ответе)
+    // Документ создан (асcистент создал файл в ответе)
     es.addEventListener('document_created', (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data) as { project_id: string; filename: string }

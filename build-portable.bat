@@ -97,19 +97,19 @@ echo [OK] Node.js %NODE_VER%
 
 :node_done
 
-:: === 4. CLAUDE CLI ===
+:: === 4. CODEX CLI ===
 
-if exist "%RUNTIME%\node\node_modules\@anthropic-ai\claude-code" (
-    echo [OK] Claude CLI
-    goto :claude_done
+if exist "%RUNTIME%\node\node_modules\@openai\codex" (
+    echo [OK] Codex CLI
+    goto :codex_done
 )
 
-echo [4/7] Claude CLI...
+echo [4/7] Codex CLI...
 set "PATH=%RUNTIME%\node;%PATH%"
-call "%RUNTIME%\node\npm.cmd" install --prefix "%RUNTIME%\node" @anthropic-ai/claude-code --silent 2>nul
-echo [OK] Claude CLI
+call "%RUNTIME%\node\npm.cmd" install --prefix "%RUNTIME%\node" @openai/codex --silent 2>nul
+echo [OK] Codex CLI
 
-:claude_done
+:codex_done
 
 :: === 5. GIT PORTABLE ===
 
@@ -200,18 +200,18 @@ echo  DONE! Portable version ready:
 echo.
 echo  %OUT%\
 echo    runtime\python\   Python %PY_VER%
-echo    runtime\node\     Node.js %NODE_VER% + Claude CLI
-echo    runtime\git\      Git %GIT_VER% (for Claude CLI)
+echo    runtime\node\     Node.js %NODE_VER% + Codex CLI
+echo    runtime\git\      Git %GIT_VER% (for Codex CLI)
 echo    data\notes\       Obsidian vault
 echo    tools\            Obsidian installer
 echo    backend\          FastAPI server
-echo    worker\           Claude CLI worker
+echo    worker\           Codex CLI worker
 echo    frontend\dist\    Built UI
 echo.
 echo  Scripts:
 echo    start.bat         Start app (double-click)
 echo    stop.bat          Stop app
-echo    auth.bat          Claude CLI authentication
+echo    auth.bat          Codex CLI authentication
 echo    open-notes.bat    Open Obsidian vault
 echo.
 echo  First run: auth.bat then start.bat

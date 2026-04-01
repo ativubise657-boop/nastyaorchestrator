@@ -175,7 +175,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=APP_TITLE,
     version=APP_VERSION,
-    description="Оркестратор для Насти — управление проектами через Claude CLI",
+    description="Оркестратор для Насти — управление проектами через Codex CLI",
     lifespan=lifespan,
 )
 

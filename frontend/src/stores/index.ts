@@ -19,6 +19,37 @@ export interface CreateProjectData {
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type ChatModel = 'glm-4.7-flash' | 'glm-5-turbo' | 'gpt-5.4-nano' | 'gpt-5.4' | 'gpt-5.3-codex'
+
+const LEGACY_MODEL_ALIASES: Record<string, ChatModel> = {
+  glm: 'glm-5-turbo',
+  haiku: 'glm-4.7-flash',
+  sonnet: 'glm-5-turbo',
+  opus: 'gpt-5.3-codex',
+  mini: 'glm-4.7-flash',
+  nano: 'gpt-5.4-nano',
+  gpt5: 'gpt-5.4',
+  'gpt5-thinking': 'gpt-5.3-codex',
+  default: 'glm-5-turbo',
+  max: 'glm-5-turbo',
+  'gpt-5.4-mini': 'glm-4.7-flash',
+  'gpt-5.4': 'gpt-5.4',
+  'gpt-5.3-codex': 'gpt-5.3-codex',
+}
+
+function normalizeChatModel(model?: string | null): ChatModel {
+  if (!model) return 'glm-5-turbo'
+  if (
+    model === 'glm-4.7-flash' ||
+    model === 'glm-5-turbo' ||
+    model === 'gpt-5.4-nano' ||
+    model === 'gpt-5.4' ||
+    model === 'gpt-5.3-codex'
+  ) {
+    return model
+  }
+  return LEGACY_MODEL_ALIASES[model] ?? 'glm-5-turbo'
+}
 
 export interface ChatMessage {
   id: string
@@ -164,8 +195,8 @@ interface AppStore {
   setTaskPhase: (phase: string | null) => void
 
   // Модель
-  selectedModel: 'haiku' | 'sonnet' | 'opus'
-  setSelectedModel: (model: 'haiku' | 'sonnet' | 'opus') => void
+  selectedModel: ChatModel
+  setSelectedModel: (model: ChatModel) => void
 
   // UI
   sidebarOpen: boolean
@@ -191,9 +222,9 @@ interface AppStore {
   clearDocRefs: () => void
   getDocRefsText: () => string
 
-  // Claude Code statusline метрики
+  // Runtime statusline metrics
   statusline: StatuslineData | null
-  setStatusline: (data: StatuslineData) => void
+  setStatusline: (data: StatuslineData | null) => void
 }
 
 export interface StatuslineData {
@@ -288,7 +319,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   sendMessage: async (message, modelOverride?) => {
     const { selectedProjectId, selectedModel } = get()
-    const model = modelOverride || selectedModel
+    const model = normalizeChatModel(modelOverride || selectedModel)
     if (!selectedProjectId) return
 
     // Оптимистично добавляем сообщение пользователя
@@ -610,8 +641,11 @@ export const useStore = create<AppStore>((set, get) => ({
   setTaskPhase: (phase) => set({ taskPhase: phase }),
 
   // --- Модель ---
-  selectedModel: 'sonnet',
-  setSelectedModel: (model) => set({ selectedModel: model }),
+  selectedModel: normalizeChatModel(localStorage.getItem('selectedModel')),
+  setSelectedModel: (model) => {
+    localStorage.setItem('selectedModel', model)
+    set({ selectedModel: normalizeChatModel(model) })
+  },
 
   // --- UI ---
   sidebarOpen: false,

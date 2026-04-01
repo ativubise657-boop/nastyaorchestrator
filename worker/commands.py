@@ -15,16 +15,33 @@ logger = logging.getLogger(__name__)
 
 # Пути проекта
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CLAUDE_MD = PROJECT_ROOT / "CLAUDE.md"
+PROJECT_INSTRUCTION_FILES = [
+    PROJECT_ROOT / "AGENTS.md",
+    PROJECT_ROOT / "CLAUDE.md",
+]
+PROJECT_INSTRUCTIONS = next(
+    (path for path in PROJECT_INSTRUCTION_FILES if path.exists()),
+    PROJECT_INSTRUCTION_FILES[0],
+)
 
 # Хранилище заметок — из env или fallback на data/notes внутри проекта
 _default_storage = str(PROJECT_ROOT / "data" / "notes")
 STORAGE_PATH = Path(os.getenv("NOTES_PATH", _default_storage))
 MEMORY_PATH = STORAGE_PATH / "memory"
-GLOBAL_CLAUDE_MD = Path.home() / ".claude" / "CLAUDE.md"
-GLOBAL_STORAGE = Path(os.getenv("GLOBAL_STORAGE_PATH", "/mnt/d/Bloknot/Reels/Work/Projects/Globalinit/CLAUDE.md"))
+GLOBAL_INSTRUCTION_FILES = [
+    Path.home() / ".codex" / "AGENTS.md",
+    Path.home() / ".Codex" / "AGENTS.md",
+    Path.home() / ".claude" / "CLAUDE.md",
+]
+GLOBAL_INSTRUCTIONS = next(
+    (path for path in GLOBAL_INSTRUCTION_FILES if path.exists()),
+    GLOBAL_INSTRUCTION_FILES[0],
+)
+GLOBAL_STORAGE = Path(
+    os.getenv("GLOBAL_STORAGE_PATH", "/mnt/d/Bloknot/Reels/Work/Projects/Globalinit/AGENTS.md")
+)
 
-# Известные встроенные команды (остальные пойдут в Claude CLI)
+# Известные встроенные команды (остальные пойдут в Codex CLI)
 BUILTIN_COMMANDS = {"/lai", "/pre", "/post", "/rev"}
 
 
@@ -68,36 +85,36 @@ async def handle_command(
 
 
 async def _cmd_lai() -> dict:
-    """LAI = les + init: сохранить CLAUDE.md в хранилище."""
+    """LAI = lessons + init: сохранить инструкции проекта в хранилище."""
     results = []
     errors = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # init: проектный CLAUDE.md -> хранилище
+    # init: проектные инструкции -> хранилище
     try:
-        if CLAUDE_MD.exists() and STORAGE_PATH.exists():
-            shutil.copy2(CLAUDE_MD, STORAGE_PATH / "CLAUDE.md")
-            results.append("✅ Проектный CLAUDE.md → хранилище")
-            logger.info("init: проектный CLAUDE.md скопирован в %s", STORAGE_PATH)
-        elif not CLAUDE_MD.exists():
-            errors.append("⚠️ Проектный CLAUDE.md не найден")
+        if PROJECT_INSTRUCTIONS.exists() and STORAGE_PATH.exists():
+            shutil.copy2(PROJECT_INSTRUCTIONS, STORAGE_PATH / PROJECT_INSTRUCTIONS.name)
+            results.append(f"✅ Инструкции проекта ({PROJECT_INSTRUCTIONS.name}) → хранилище")
+            logger.info("init: проектные инструкции скопированы в %s", STORAGE_PATH)
+        elif not PROJECT_INSTRUCTIONS.exists():
+            errors.append("⚠️ Инструкции проекта не найдены")
         elif not STORAGE_PATH.exists():
             errors.append(f"⚠️ Хранилище не найдено: {STORAGE_PATH}")
     except Exception as e:
-        errors.append(f"❌ Ошибка копирования проектного CLAUDE.md: {e}")
-        logger.exception("init: ошибка копирования проектного CLAUDE.md")
+        errors.append(f"❌ Ошибка копирования инструкций проекта: {e}")
+        logger.exception("init: ошибка копирования инструкций проекта")
 
-    # init: глобальный CLAUDE.md -> хранилище
+    # init: глобальные инструкции -> хранилище
     try:
-        if GLOBAL_CLAUDE_MD.exists() and GLOBAL_STORAGE.parent.exists():
-            shutil.copy2(GLOBAL_CLAUDE_MD, GLOBAL_STORAGE)
-            results.append("✅ Глобальный CLAUDE.md → хранилище")
-            logger.info("init: глобальный CLAUDE.md скопирован в %s", GLOBAL_STORAGE)
-        elif not GLOBAL_CLAUDE_MD.exists():
-            errors.append("⚠️ Глобальный CLAUDE.md не найден")
+        if GLOBAL_INSTRUCTIONS.exists() and GLOBAL_STORAGE.parent.exists():
+            shutil.copy2(GLOBAL_INSTRUCTIONS, GLOBAL_STORAGE)
+            results.append(f"✅ Глобальные инструкции ({GLOBAL_INSTRUCTIONS.name}) → хранилище")
+            logger.info("init: глобальные инструкции скопированы в %s", GLOBAL_STORAGE)
+        elif not GLOBAL_INSTRUCTIONS.exists():
+            errors.append("⚠️ Глобальные инструкции не найдены")
     except Exception as e:
-        errors.append(f"❌ Ошибка копирования глобального CLAUDE.md: {e}")
-        logger.exception("init: ошибка копирования глобального CLAUDE.md")
+        errors.append(f"❌ Ошибка копирования глобальных инструкций: {e}")
+        logger.exception("init: ошибка копирования глобальных инструкций")
 
     # Формируем отчёт
     report_parts = [f"**LAI выполнен** ({now})", ""]
@@ -164,7 +181,7 @@ async def _cmd_pre(
             # Обрезаем длинные сообщения для компактности
             if len(content) > 500:
                 content = content[:500] + "..."
-            prefix = "**Настя:**" if role == "user" else "**Claude:**"
+            prefix = "**Настя:**" if role == "user" else "**Codex:**"
             lines.append(f"{prefix} {content}")
             lines.append("")
 

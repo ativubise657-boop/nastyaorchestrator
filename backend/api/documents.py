@@ -215,7 +215,7 @@ async def upload_document(
 async def create_document(project_id: str, body: DocumentCreate, request: Request):
     """
     Создаёт документ из текстового содержимого (без загрузки файла).
-    Используется worker-ом когда Claude генерирует документы в ответе.
+    Используется worker-ом когда Codex генерирует документы в ответе.
     Публикует SSE-событие document_created для обновления панели на фронте.
     """
     state = request.app.state.db

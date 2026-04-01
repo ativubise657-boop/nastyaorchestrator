@@ -17,16 +17,24 @@ import httpx
 from worker.circuit_breaker import can_execute, record_crash, record_success
 from worker.quality_gate import evaluate as qg_evaluate, should_retry as qg_should_retry
 from worker.commands import is_command, handle_command
+from worker.aitunnel_executor import AITunnelExecutor
 from worker.config import WorkerConfig
 from worker.document_extractor import extract_documents
-from worker.executor import ClaudeExecutor
+from worker.executor import CodexExecutor
 from worker.mode_resolver import resolve_mode
+from worker.models_registry import get_model_id
 from worker.result_pusher import ResultPusher
 
 logger = logging.getLogger(__name__)
 
 # Таймаут запроса к очереди (секунды)
 _QUEUE_HTTP_TIMEOUT = 15
+_AITUNNEL_MODELS = {"glm-4.7-flash", "glm-5-turbo", "gpt-5.4-nano"}
+
+
+def _is_aitunnel_model(model: str) -> bool:
+    resolved = (get_model_id(model) or model).strip().lower()
+    return resolved in _AITUNNEL_MODELS
 
 
 class Poller:
@@ -34,8 +42,15 @@ class Poller:
 
     def __init__(self, config: WorkerConfig):
         self.config = config
-        self.executor = ClaudeExecutor(
-            claude_binary=config.claude_binary,
+        self.codex_executor = CodexExecutor(
+            codex_binary=config.codex_binary,
+            task_timeout=config.task_timeout,
+        )
+        self.aitunnel_executor = AITunnelExecutor(
+            api_key=config.aitunnel_api_key,
+            base_url=config.aitunnel_base_url,
+            request_timeout=config.aitunnel_request_timeout,
+            max_tool_rounds=config.aitunnel_max_tool_rounds,
             task_timeout=config.task_timeout,
         )
         self.pusher = ResultPusher(
@@ -53,6 +68,12 @@ class Poller:
 
         # ID текущей задачи (для heartbeat)
         self._current_task_id: str | None = None
+        self._current_executor: CodexExecutor | AITunnelExecutor | None = None
+
+    def _get_executor(self, model: str) -> CodexExecutor | AITunnelExecutor:
+        if _is_aitunnel_model(model):
+            return self.aitunnel_executor
+        return self.codex_executor
 
     # ─── Определение фазы по интенту ────────────────────────────────
 
@@ -130,7 +151,7 @@ class Poller:
             project_name = project.get("name", "проект")
             return f"Роюсь в GitHub: {project_name}..."
 
-        # Ничего специального — вернём None (дефолтное "Claude думает...")
+        # Ничего специального — вернём None (дефолтное "Codex думает...")
         return None
 
     # ─── Точка входа ────────────────────────────────────────────────
@@ -268,7 +289,7 @@ class Poller:
 
         # Режим может быть задан явно в задаче или определяется автоматически
         mode: str = task.get("mode") or resolve_mode(prompt)
-        model: str = task.get("model", "sonnet")
+        model: str = task.get("model", "glm-5-turbo")
 
         # Контекст из backend (история чата + проект + git_url + all_projects + документы)
         chat_history: list[dict] | None = task.get("chat_history")
@@ -279,7 +300,7 @@ class Poller:
         doc_folders: list[str] | None = task.get("doc_folders")
         completed_tasks: list[dict] | None = task.get("completed_tasks")
 
-        # Перехват встроенных команд (без вызова Claude CLI)
+        # Перехват встроенных команд (без вызова Codex CLI)
         if is_command(prompt):
             logger.info("Встроенная команда: %s (задача %s)", prompt.strip(), task_id)
             self._current_task_id = task_id
@@ -313,6 +334,8 @@ class Poller:
         )
 
         self._current_task_id = task_id
+        executor = self._get_executor(model)
+        self._current_executor = executor
 
         try:
             # Флаг: получили ли хоть один чанк текста
@@ -338,7 +361,7 @@ class Poller:
 
             thinking_task = asyncio.create_task(thinking_pinger())
 
-            result = await self.executor.execute(
+            result = await executor.execute(
                 prompt=prompt,
                 project_path=project_path,
                 mode=mode,
@@ -355,7 +378,7 @@ class Poller:
 
             thinking_task.cancel()
 
-            # Извлекаем документы из ответа Claude (:::document:filename[:folder]\n...\n:::)
+            # Извлекаем документы из ответа Codex (:::document:filename[:folder]\n...\n:::)
             result_text = result.get("result", "")
             if result["status"] == "completed" and result_text:
                 cleaned_text, docs = extract_documents(result_text)
@@ -424,6 +447,7 @@ class Poller:
                 error=f"Внутренняя ошибка worker: {e}",
             )
         finally:
+            self._current_executor = None
             self._current_task_id = None
 
     async def _heartbeat_loop(self) -> None:
@@ -436,6 +460,7 @@ class Poller:
                 cancel_id = resp.get("cancel_task_id")
                 if cancel_id and cancel_id == self._current_task_id:
                     logger.info("Задача %s отменена пользователем — прерываем", cancel_id)
-                    self.executor.cancel()
+                    if self._current_executor is not None:
+                        self._current_executor.cancel()
             else:
                 logger.warning("Heartbeat не доставлен")

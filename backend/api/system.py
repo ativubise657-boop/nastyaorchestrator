@@ -8,7 +8,9 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone, timedelta
+from pathlib import Path as _Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -70,20 +72,122 @@ async def health(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# GET /api/system/statusline  — метрики из Claude Code statusline
+# GET /api/system/statusline  — метрики из Codex CLI statusline
 # ---------------------------------------------------------------------------
 
 import json as _json
-from pathlib import Path as _Path
 
-_STATUSLINE_PATH = _Path("/tmp/claude-statusline.json")
+_STATUSLINE_PATH = _Path(
+    os.getenv(
+        "STATUSLINE_PATH",
+        os.getenv("CODEX_STATUSLINE_PATH", os.getenv("CLAUDE_STATUSLINE_PATH", "/tmp/codex-statusline.json")),
+    )
+)
+_SESSIONS_DIR = _Path(
+    os.getenv(
+        "CODEX_SESSIONS_DIR",
+        os.getenv("CLAUDE_SESSIONS_DIR", str(_Path.home() / ".codex" / "sessions")),
+    )
+)
 _sl_cache: dict = {}
 _sl_mtime: float = 0
+_sl_sessions_cache: dict = {}
+_sl_sessions_signature: tuple[tuple[str, int], ...] = ()
+
+
+def _parse_iso_to_unix(ts: str | None) -> int:
+    if not ts:
+        return 0
+    try:
+        return int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return 0
+
+
+def _build_session_statusline(event: dict) -> dict:
+    payload = event.get("payload", {})
+    info = payload.get("info", {}) if isinstance(payload, dict) else {}
+    if not isinstance(info, dict):
+        info = {}
+    rate_limits = payload.get("rate_limits") or info.get("rate_limits") or {}
+    primary = rate_limits.get("primary") or {}
+    secondary = rate_limits.get("secondary") or {}
+    last_usage = info.get("last_token_usage") or {}
+    context_window = info.get("model_context_window") or 0
+
+    context_used_pct = None
+    total_tokens = last_usage.get("total_tokens")
+    if context_window and isinstance(total_tokens, (int, float)):
+        context_used_pct = round(min(100.0, max(0.0, (float(total_tokens) / float(context_window)) * 100.0)), 1)
+
+    return {
+        "rl_5h_pct": primary.get("used_percent"),
+        "rl_5h_reset": primary.get("resets_at"),
+        "rl_7d_pct": secondary.get("used_percent"),
+        "ram_used_gb": 0,
+        "ram_total_gb": 0,
+        "ram_pct": 0,
+        "session_cost_usd": 0,
+        "context_used_pct": context_used_pct,
+        "model": rate_limits.get("limit_id"),
+        "ts": _parse_iso_to_unix(event.get("timestamp")) or int(datetime.now(timezone.utc).timestamp()),
+        "source": "codex_sessions",
+        "plan_type": rate_limits.get("plan_type"),
+    }
+
+
+def _load_statusline_from_sessions() -> dict:
+    global _sl_sessions_cache, _sl_sessions_signature
+
+    try:
+        if not _SESSIONS_DIR.exists():
+            return {}
+
+        files = sorted(_SESSIONS_DIR.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]
+        signature = tuple((str(path), int(path.stat().st_mtime)) for path in files[:8])
+        if signature == _sl_sessions_signature:
+            return _sl_sessions_cache
+
+        for path in files:
+            try:
+                lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            except Exception:
+                continue
+
+            for line in reversed(lines):
+                if '"type":"event_msg"' not in line or '"type":"token_count"' not in line:
+                    continue
+                try:
+                    event = _json.loads(line)
+                except Exception:
+                    continue
+
+                payload = event.get("payload", {})
+                if payload.get("type") != "token_count":
+                    continue
+
+                info = payload.get("info", {}) if isinstance(payload, dict) else {}
+                if not isinstance(info, dict):
+                    info = {}
+                rate_limits = payload.get("rate_limits") or info.get("rate_limits") or {}
+                if not rate_limits:
+                    continue
+
+                parsed = _build_session_statusline(event)
+                _sl_sessions_signature = signature
+                _sl_sessions_cache = parsed
+                return parsed
+
+        _sl_sessions_signature = signature
+        _sl_sessions_cache = {}
+        return {}
+    except Exception:
+        return _sl_sessions_cache or {}
 
 
 @router_system.get("/statusline")
 async def statusline():
-    """Метрики из Claude Code statusline (rate limits, RAM, model)."""
+    """Метрики из Codex CLI statusline (rate limits, RAM, model)."""
     global _sl_cache, _sl_mtime
     try:
         if _STATUSLINE_PATH.exists():
@@ -91,9 +195,11 @@ async def statusline():
             if mtime != _sl_mtime:
                 _sl_cache = _json.loads(_STATUSLINE_PATH.read_text())
                 _sl_mtime = mtime
-        return _sl_cache or {}
+        if _sl_cache:
+            return _sl_cache
+        return _load_statusline_from_sessions()
     except Exception:
-        return _sl_cache or {}
+        return _sl_cache or _load_statusline_from_sessions() or {}
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +384,7 @@ async def queue_next(request: Request):
     ]
 
     # Shared context — результаты последних завершённых задач проекта
-    # Даёт Claude понимание что уже было сделано/обсуждено
+    # Даёт Codex понимание что уже было сделано/обсуждено
     done_rows = state.fetchall(
         """
         SELECT prompt, result FROM tasks
@@ -294,7 +400,7 @@ async def queue_next(request: Request):
             for r in done_rows
         ]
 
-    # Информация о проекте + path для Claude CLI
+    # Информация о проекте + path для Codex CLI
     proj_row = state.fetchone(
         "SELECT name, description, path, git_url FROM projects WHERE id = ?",
         (project_id,),
@@ -303,7 +409,7 @@ async def queue_next(request: Request):
         "name": proj_row["name"] if proj_row else "Неизвестный проект",
         "description": proj_row["description"] if proj_row else "",
     }
-    # project_path используется worker-ом для --project-path Claude CLI
+    # project_path используется worker-ом для --cd Codex CLI
     if proj_row and proj_row["path"]:
         task["project_path"] = proj_row["path"]
     # git_url для read-only контекста через GitHub API

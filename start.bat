@@ -96,27 +96,27 @@ if not exist "%VENV%\installed.marker" (
     echo [OK] Зависимости установлены
 )
 
-:: ─── Проверка Claude CLI ────────────────────────────────────
-where claude >nul 2>&1
+:: ─── Проверка Codex CLI ─────────────────────────────────────
+where codex >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo [SETUP] Устанавливаю Claude CLI...
-    call npm install -g @anthropic-ai/claude-code
+    echo [SETUP] Устанавливаю Codex CLI...
+    call npm install -g @openai/codex
     if errorlevel 1 (
-        echo [ОШИБКА] Не удалось установить Claude CLI
-        echo          Попробуйте вручную: npm install -g @anthropic-ai/claude-code
+        echo [ОШИБКА] Не удалось установить Codex CLI
+        echo          Попробуйте вручную: npm install -g @openai/codex
         pause
         exit /b 1
     )
-    echo [OK] Claude CLI установлен
+    echo [OK] Codex CLI установлен
     echo.
-    echo [!] Нужно авторизоваться в Claude CLI.
+    echo [!] Нужно авторизоваться в Codex CLI.
     echo     Сейчас откроется окно авторизации...
     echo.
-    call claude auth login
+    call codex login
 )
 
-echo [OK] Claude CLI найден
+echo [OK] Codex CLI найден
 
 :: ─── Создание .env ──────────────────────────────────────────
 if not exist "%ENV_FILE%" (
@@ -137,6 +137,9 @@ if not exist "%ENV_FILE%" (
         echo.
         echo # Standalone режим — backend раздаёт фронтенд
         echo SERVE_STATIC=true
+        echo.
+        echo # CODEX_BINARY wrapper via npx (bypasses WindowsApps issues)
+        echo CODEX_BINARY=tools\codex-npx.cmd
         echo.
         echo # Bitrix24 CRM webhook ^(опционально^)
         echo # BITRIX_WEBHOOK_URL=https://your-portal.bitrix24.ru/rest/USER_ID/TOKEN/

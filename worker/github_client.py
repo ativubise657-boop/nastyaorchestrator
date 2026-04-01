@@ -190,33 +190,49 @@ async def get_recent_commits(git_url: str, count: int = 5) -> str | None:
         return None
 
 
-async def build_project_context(git_url: str) -> str:
-    """Собирает контекст проекта для промпта Claude.
+async def _get_repo_instructions(git_url: str) -> tuple[str | None, str | None]:
+    """Получает инструкции проекта: AGENTS.md в приоритете, fallback на CLAUDE.md."""
+    import asyncio
 
-    Подтягивает параллельно: структуру файлов, CLAUDE.md, README, коммиты.
+    agents_md_task = asyncio.create_task(get_file_content(git_url, "AGENTS.md"))
+    claude_md_task = asyncio.create_task(get_file_content(git_url, "CLAUDE.md"))
+    agents_md, claude_md = await asyncio.gather(agents_md_task, claude_md_task)
+
+    if agents_md:
+        return "AGENTS.md", agents_md
+    if claude_md:
+        return "CLAUDE.md", claude_md
+    return None, None
+
+
+async def build_project_context(git_url: str) -> str:
+    """Собирает контекст проекта для промпта Codex.
+
+    Подтягивает параллельно: структуру файлов, AGENTS.md/CLAUDE.md, README, коммиты.
     """
     import asyncio
 
     # Запускаем все запросы параллельно
     tree_task = asyncio.create_task(get_repo_tree(git_url))
-    claude_md_task = asyncio.create_task(get_file_content(git_url, "CLAUDE.md"))
+    instructions_task = asyncio.create_task(_get_repo_instructions(git_url))
     readme_task = asyncio.create_task(get_readme(git_url))
     commits_task = asyncio.create_task(get_recent_commits(git_url))
 
-    tree, claude_md, readme, commits = await asyncio.gather(
-        tree_task, claude_md_task, readme_task, commits_task
+    tree, instructions, readme, commits = await asyncio.gather(
+        tree_task, instructions_task, readme_task, commits_task
     )
+    instructions_name, instructions_text = instructions
 
     parts = []
 
     if tree:
         parts.append(tree)
 
-    # CLAUDE.md (приоритет) или README
-    if claude_md:
-        if len(claude_md) > 3000:
-            claude_md = claude_md[:3000] + "\n... (обрезано)"
-        parts.append(f"CLAUDE.md проекта:\n{claude_md}")
+    # AGENTS.md/CLAUDE.md (приоритет) или README
+    if instructions_text and instructions_name:
+        if len(instructions_text) > 3000:
+            instructions_text = instructions_text[:3000] + "\n... (обрезано)"
+        parts.append(f"{instructions_name} проекта:\n{instructions_text}")
     elif readme:
         if len(readme) > 2000:
             readme = readme[:2000] + "\n... (обрезано)"
@@ -231,7 +247,7 @@ async def build_project_context(git_url: str) -> str:
 async def build_all_projects_context(projects: list[dict]) -> str:
     """Собирает краткий контекст ВСЕХ проектов параллельно.
 
-    Для каждого проекта подтягивает: структуру + CLAUDE.md (обрезанный).
+    Для каждого проекта подтягивает: структуру + AGENTS.md/CLAUDE.md (обрезанный).
     """
     import asyncio
 
@@ -242,10 +258,11 @@ async def build_all_projects_context(projects: list[dict]) -> str:
         parts = [f"### {name}", f"_{desc}_"]
 
         if git_url:
-            # Параллельно: дерево + CLAUDE.md
+            # Параллельно: дерево + AGENTS.md/CLAUDE.md
             tree_task = asyncio.create_task(get_repo_tree(git_url, max_entries=80))
-            claude_md_task = asyncio.create_task(get_file_content(git_url, "CLAUDE.md"))
-            tree, claude_md = await asyncio.gather(tree_task, claude_md_task)
+            instructions_task = asyncio.create_task(_get_repo_instructions(git_url))
+            tree, instructions = await asyncio.gather(tree_task, instructions_task)
+            instructions_name, instructions_text = instructions
 
             if tree:
                 # Только первые 30 строк дерева для краткости
@@ -254,11 +271,11 @@ async def build_all_projects_context(projects: list[dict]) -> str:
                     tree = "\n".join(tree_lines[:32]) + f"\n  ... и ещё {len(tree_lines) - 32} файлов"
                 parts.append(tree)
 
-            if claude_md:
+            if instructions_text and instructions_name:
                 # Краткий обзор — первые 1000 символов
-                if len(claude_md) > 1000:
-                    claude_md = claude_md[:1000] + "\n... (обрезано)"
-                parts.append(f"CLAUDE.md:\n{claude_md}")
+                if len(instructions_text) > 1000:
+                    instructions_text = instructions_text[:1000] + "\n... (обрезано)"
+                parts.append(f"{instructions_name}:\n{instructions_text}")
 
         return "\n".join(parts)
 

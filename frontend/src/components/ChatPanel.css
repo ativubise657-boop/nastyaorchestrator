@@ -382,7 +382,7 @@
   color: var(--text-disabled);
 }
 
-/* ===== Claude Code Statusline метрики ===== */
+/* ===== Codex CLI Statusline метрики ===== */
 .statusline-metrics {
   display: flex;
   gap: 6px;
@@ -394,6 +394,15 @@
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   white-space: nowrap;
   opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sl-pill--muted {
+  color: var(--text-disabled, #6b7280);
+}
+.sl-label {
+  color: var(--text-disabled, #6b7280);
 }
 .sl-dim {
   color: var(--text-disabled, #6b7280);

@@ -79,7 +79,7 @@ class ChatSendRequest(BaseModel):
     project_id: str
     message: str
     mode: str = "auto"  # auto / ag+ / rev / solo
-    model: str = "sonnet"  # haiku / sonnet / opus
+    model: str = "glm-5-turbo"  # glm-4.7-flash / glm-5-turbo / gpt-5.4-nano / gpt-5.4 / gpt-5.3-codex
 
 
 class ChatSendResponse(BaseModel):

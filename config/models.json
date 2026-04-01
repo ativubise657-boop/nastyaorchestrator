@@ -1,8 +1,21 @@
 {
   "models": {
-    "opus": "claude-opus-4-6",
-    "sonnet": "claude-sonnet-4-6",
-    "haiku": "claude-haiku-4-5-20251001"
+    "glm": "glm-5-turbo",
+    "glm-4.7-flash": "glm-4.7-flash",
+    "glm-5-turbo": "glm-5-turbo",
+    "gpt-5.4-nano": "gpt-5.4-nano",
+    "gpt-5.4": "gpt-5.4",
+    "gpt-5.3-codex": "gpt-5.3-codex",
+    "mini": "glm-4.7-flash",
+    "nano": "gpt-5.4-nano",
+    "default": "glm-5-turbo",
+    "max": "glm-5-turbo",
+    "haiku": "glm-4.7-flash",
+    "sonnet": "glm-5-turbo",
+    "opus": "gpt-5.3-codex",
+    "gpt-5.4-mini": "glm-4.7-flash",
+    "gpt5": "gpt-5.4",
+    "gpt5-thinking": "gpt-5.3-codex"
   },
-  "default_chat": "sonnet"
+  "default_chat": "glm-5-turbo"
 }

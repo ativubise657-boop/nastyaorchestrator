@@ -30,3 +30,6 @@ Thumbs.db
 .gstack/
 portablenastyaorc/
 .DS_Store
+.claude/
+.obsidian.zip
+*.7z

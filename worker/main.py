@@ -57,7 +57,7 @@ async def main() -> None:
     logger.info("Конфигурация загружена:")
     logger.info("  server_url:  %s", config.server_url)
     logger.info("  worker_id:   %s", config.worker_id)
-    logger.info("  claude_bin:  %s", config.claude_binary)
+    logger.info("  codex_bin:   %s", config.codex_binary)
     logger.info("  poll_interval:      %ds", config.poll_interval)
     logger.info("  heartbeat_interval: %ds", config.heartbeat_interval)
     logger.info("  task_timeout:       %ds", config.task_timeout)

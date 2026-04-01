@@ -7,6 +7,7 @@ import {
   useChatFontSize,
   useStore,
   type ChatMessage,
+  type ChatModel,
   type TaskStatus,
   type StatuslineData,
 } from '../stores'
@@ -14,33 +15,74 @@ import { useChat, renderMarkdown } from '../hooks/useChat'
 import { useVoiceInput } from '../hooks/useVoiceInput'
 import './ChatPanel.css'
 
-/** Компактные метрики из Claude Code statusline */
-const StatuslineMetrics = memo(() => {
+/** Компактные метрики рантайма */
+const CLI_CHAT_MODELS: ChatModel[] = ['gpt-5.4', 'gpt-5.3-codex']
+
+function isCliChatModel(model: ChatModel): boolean {
+  return CLI_CHAT_MODELS.includes(model)
+}
+
+const StatuslineMetrics = memo(({ selectedModel }: { selectedModel: ChatModel }) => {
   const statusline = useStore(s => s.statusline)
   const setStatusline = useStore(s => s.setStatusline)
+  const [statuslineChecked, setStatuslineChecked] = useState(false)
+  const isCliModel = isCliChatModel(selectedModel)
 
-  // Polling каждые 10 секунд
   useEffect(() => {
+    if (!isCliModel) {
+      setStatusline(null)
+      setStatuslineChecked(false)
+      return
+    }
+
+    let active = true
     const fetchStatusline = () => {
       fetch('/api/system/statusline')
         .then(r => r.json())
         .then((data: StatuslineData) => {
-          if (data && data.ts) setStatusline(data)
+          if (!active) return
+          const hasLimits = !!data && (
+            data.rl_5h_pct != null ||
+            data.rl_7d_pct != null ||
+            data.context_used_pct != null
+          )
+          setStatusline(hasLimits && data.ts ? data : null)
+          setStatuslineChecked(true)
         })
-        .catch(() => {})
+        .catch(() => {
+          if (!active) return
+          setStatusline(null)
+          setStatuslineChecked(true)
+        })
     }
     fetchStatusline()
     const interval = setInterval(fetchStatusline, 10_000)
-    return () => clearInterval(interval)
-  }, [setStatusline])
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
+  }, [isCliModel, setStatusline])
 
-  if (!statusline) return null
+  if (!isCliModel) return null
+
+  if (!statusline) {
+    if (!statuslineChecked) return null
+    return (
+      <div className="statusline-metrics">
+        <span className="sl-pill sl-pill--muted" title="Codex CLI пока не отдал runtime metrics">
+          CLI лимиты: н/д
+        </span>
+      </div>
+    )
+  }
 
   const has5h = statusline.rl_5h_pct != null
   const has7d = statusline.rl_7d_pct != null
-  if (!has5h && !has7d) return null
+  const hasContext = statusline.context_used_pct != null
+  if (!has5h && !has7d && !hasContext) return null
 
-  const rlColor = (pct: number) => pct >= 80 ? '#ef4444' : pct >= 50 ? '#eab308' : '#4ade80'
+  const remainingPct = (pct: number) => Math.max(0, 100 - pct)
+  const leftColor = (pct: number) => pct <= 20 ? '#ef4444' : pct <= 50 ? '#eab308' : '#4ade80'
 
   let resetStr = ''
   if (statusline.rl_5h_reset) {
@@ -48,30 +90,35 @@ const StatuslineMetrics = memo(() => {
     if (diff > 0) {
       const h = Math.floor(diff / 3600)
       const m = Math.floor((diff % 3600) / 60)
-      resetStr = ` (${h}h${m}m)`
+      resetStr = `сброс ${h}ч ${m}м`
     }
   }
 
-  const ramColor = statusline.ram_pct >= 85 ? '#ef4444' : statusline.ram_pct >= 70 ? '#eab308' : '#4ade80'
+  const fiveHourLeft = has5h ? remainingPct(statusline.rl_5h_pct!) : null
+  const sevenDayLeft = has7d ? remainingPct(statusline.rl_7d_pct!) : null
+  const contextLeft = hasContext ? remainingPct(statusline.context_used_pct) : null
 
   return (
     <div className="statusline-metrics">
-      {has5h && (
-        <span className="sl-pill" title={`Rate limit 5h: ${statusline.rl_5h_pct}%${resetStr}`}>
-          <span style={{ color: rlColor(statusline.rl_5h_pct!) }}>5h:{statusline.rl_5h_pct}%</span>
+      {fiveHourLeft != null && (
+        <span className="sl-pill" title={`Остаток 5ч: ${fiveHourLeft}%`}>
+          <span className="sl-label">5ч:</span>
+          <span style={{ color: leftColor(fiveHourLeft) }}>{fiveHourLeft}%</span>
           {resetStr && <span className="sl-dim">{resetStr}</span>}
         </span>
       )}
-      {has7d && (
-        <span className="sl-pill" title={`Rate limit 7d: ${statusline.rl_7d_pct}%`}>
-          <span style={{ color: rlColor(statusline.rl_7d_pct!) }}>7d:{statusline.rl_7d_pct}%</span>
+      {sevenDayLeft != null && (
+        <span className="sl-pill" title={`Остаток 7д: ${sevenDayLeft}%`}>
+          <span className="sl-label">7д:</span>
+          <span style={{ color: leftColor(sevenDayLeft) }}>{sevenDayLeft}%</span>
         </span>
       )}
-      <span className="sl-pill" title={`RAM: ${statusline.ram_used_gb}/${statusline.ram_total_gb}G`}>
-        <span style={{ color: ramColor }}>
-          RAM:{statusline.ram_used_gb}/{statusline.ram_total_gb}G {statusline.ram_pct}%
+      {contextLeft != null && (
+        <span className="sl-pill" title={`Свободный контекст: ${contextLeft}%`}>
+          <span className="sl-label">ctx:</span>
+          <span style={{ color: leftColor(contextLeft) }}>{contextLeft}%</span>
         </span>
-      </span>
+      )}
     </div>
   )
 })
@@ -79,33 +126,19 @@ StatuslineMetrics.displayName = 'StatuslineMetrics'
 
 // ===== Промпт для кнопки Boost =====
 
-const BOOST_PROMPT = `⚡ BOOST — ревью и усиление предыдущего ответа.
+const BOOST_PROMPT = `BOOST — ревью и усиление предыдущего ответа.
 
-Возьми предыдущий ответ ассистента (последний ответ в истории чата) и проведи глубокий анализ:
+Возьми последний ответ ассистента и проведи жёсткий инженерный разбор:
 
-1. **Оценка** — поставь балл от 1 до 100, где:
-   - 1-30: критические проблемы, нужно переделывать
-   - 31-60: работает, но много недочётов
-   - 61-80: хорошо, но есть что улучшить
-   - 81-95: отлично, мелкие доработки
-   - 96-100: идеально, лучше не придумаешь
+1. Дай оценку от 1 до 100.
+2. Перечисли, что уже хорошо.
+3. Покажи, что слабо или рискованно: архитектура, баги, UX, безопасность, пропущенные проверки.
+4. Дай конкретный план, как довести ответ до максимально сильной версии.
+5. В конце спроси: "Доделать? (да/нет)"
 
-2. **Что хорошо** — конкретные сильные стороны
+Если я отвечу "да", "делай" или "доделай", выполни план доработки end-to-end. Если нужен более широкий проход по нескольким файлам, работай шире и глубже, а не ограничивайся косметикой.
 
-3. **Что не так** — конкретные проблемы по категориям:
-   - Архитектура (правильный ли компонент? правильные ли файлы?)
-   - Код (баги, edge cases, дубликаты)
-   - UX (удобство, доступность)
-   - Безопасность
-
-4. **План доработки до 100** — конкретные шаги, что исправить
-
-5. В конце спроси: **"Доделать? (да/нет)"**
-
-Если я отвечу "да", "делай", "доделай" — выполни план доработки используя agr режим.
-Используй ag+ если нужно (5+ файлов). Доведи до 100 баллов.
-
-ВАЖНО: Не просто описывай проблемы — ИСПРАВЛЯЙ их при доработке. Проверяй что компоненты реально рендерятся (ищи импорты в App.tsx). Не пиши код в мёртвые компоненты.`
+Важно: не просто перечисляй проблемы, а реально исправляй их при следующем шаге. Проверяй, что изменения действительно используются в приложении.`
 
 // ===== Типизированный helper для статуса задачи =====
 function TaskStatusBadge({ status }: { status: TaskStatus }) {
@@ -134,11 +167,13 @@ function TypingIndicator() {
 }
 
 // ===== Одно сообщение — full-width строка =====
-// CSS-фильтры аватарки Claude по модели
+// CSS-фильтры аватарки Codex по модели
 const AVATAR_FILTERS: Record<string, string> = {
-  opus: 'none',
-  sonnet: 'hue-rotate(200deg) saturate(1.3)',
-  haiku: 'saturate(0.2) brightness(0.8)',
+  'glm-5-turbo': 'none',
+  'glm-4.7-flash': 'hue-rotate(38deg) saturate(1.35)',
+  'gpt-5.4-nano': 'hue-rotate(205deg) saturate(1.2) brightness(0.95)',
+  'gpt-5.4': 'hue-rotate(155deg) saturate(1.2) brightness(1.02)',
+  'gpt-5.3-codex': 'hue-rotate(290deg) saturate(1.35) brightness(0.98)',
 }
 
 function Message({ message, msgNumber, onRefClick }: {
@@ -170,7 +205,7 @@ function Message({ message, msgNumber, onRefClick }: {
         ) : (
           <img
             src="/avatar-claude.png"
-            alt="Claude"
+            alt="Codex"
             className="message__avatar-img"
             style={{ filter: AVATAR_FILTERS[selectedModel] ?? 'none' }}
           />
@@ -180,7 +215,7 @@ function Message({ message, msgNumber, onRefClick }: {
       <div className="message__body">
         {/* Имя + время */}
         <div className="message__header">
-          <span className="message__name">{isUser ? 'Настя' : 'Claude'}</span>
+          <span className="message__name">{isUser ? 'Настя' : 'Codex'}</span>
           <span className="message__time">{formatTime(message.created_at)}</span>
           {task && !isUser && <TaskStatusBadge status={task.status} />}
         </div>
@@ -219,9 +254,11 @@ function formatTime(iso: string): string {
 
 // ===== Оценка времени ответа по модели =====
 const ESTIMATE_SECONDS: Record<string, number> = {
-  haiku: 10,
-  sonnet: 20,
-  opus: 45,
+  'glm-4.7-flash': 8,
+  'glm-5-turbo': 18,
+  'gpt-5.4-nano': 12,
+  'gpt-5.4': 16,
+  'gpt-5.3-codex': 36,
 }
 const GITHUB_EXTRA = 4 // доп. секунды на GitHub API
 
@@ -249,7 +286,7 @@ function ThinkingTimer({ phase, model, hasGitHub }: {
   } else if (overdue) {
     label = 'Ещё немного...'
   } else {
-    label = 'Claude думает...'
+    label = 'Codex думает...'
   }
 
   // Таймер
@@ -603,17 +640,17 @@ export function ChatPanel() {
         <div className="chat-panel__bottom-bar">
           <ModelSelector selected={selectedModel} />
           <FontSizeControl size={chatFontSize} onChange={setChatFontSize} />
-          <StatuslineMetrics />
+          <StatuslineMetrics selectedModel={selectedModel} />
           <div className="cmd-buttons">
             <button
               className="cmd-btn cmd-btn--boost"
               onClick={() => {
                 if (selectedProjectId && !sendingMessage) {
-                  handleSend(BOOST_PROMPT, 'opus')
+                  handleSend(BOOST_PROMPT, 'gpt-5.3-codex')
                 }
               }}
               disabled={!selectedProjectId || sendingMessage}
-              title="Оценить предыдущий ответ 1-100 и предложить доработку (Opus)"
+              title="Оценить предыдущий ответ 1-100 и предложить доработку (GPT-5 Thinking через CLI)"
             >
               ⚡ BOOST
             </button>
@@ -628,7 +665,7 @@ export function ChatPanel() {
                 }
               }}
               disabled={!selectedProjectId || sendingMessage}
-              title="Сохранить уроки + CLAUDE.md"
+              title="Сохранить уроки + инструкции проекта"
             >
               LAI
             </button>
@@ -676,18 +713,24 @@ export function ChatPanel() {
 }
 
 // Переключатель модели
-const MODELS = ['haiku', 'sonnet', 'opus'] as const
+const MODEL_OPTIONS: Array<{ id: ChatModel; label: string }> = [
+  { id: 'glm-4.7-flash', label: 'GLM 4.7 Flash' },
+  { id: 'glm-5-turbo', label: 'GLM 5 Turbo' },
+  { id: 'gpt-5.4-nano', label: 'GPT 5.4 Nano' },
+  { id: 'gpt-5.4', label: 'GPT 5' },
+  { id: 'gpt-5.3-codex', label: 'GPT 5 Thinking' },
+]
 
-function ModelSelector({ selected }: { selected: string }) {
+function ModelSelector({ selected }: { selected: ChatModel }) {
   return (
     <div className="model-selector">
-      {MODELS.map((m) => (
+      {MODEL_OPTIONS.map((model) => (
         <button
-          key={m}
-          className={`model-selector__btn ${m === selected ? 'model-selector__btn--active' : ''}`}
-          onClick={() => useStore.getState().setSelectedModel(m)}
+          key={model.id}
+          className={`model-selector__btn ${model.id === selected ? 'model-selector__btn--active' : ''}`}
+          onClick={() => useStore.getState().setSelectedModel(model.id)}
         >
-          {m}
+          {model.label}
         </button>
       ))}
     </div>

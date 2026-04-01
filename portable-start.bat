@@ -8,13 +8,12 @@ set "ROOT=%~dp0"
 set "PORT=8781"
 set "PYTHON=%ROOT%runtime\python\python.exe"
 set "NODE=%ROOT%runtime\node\node.exe"
-set "CLAUDE_CLI=%ROOT%runtime\node\node_modules\@anthropic-ai\claude-code\cli.js"
+set "CODEX_CLI=%ROOT%runtime\node\node_modules\.bin\codex.cmd"
 set "ENV_FILE=%ROOT%.env"
 set "DATA=%ROOT%data"
 
-:: Runtime PATH + git for Claude CLI
+:: Runtime PATH
 set "PATH=%ROOT%runtime\git\bin;%ROOT%runtime\git\usr\bin;%ROOT%runtime\python;%ROOT%runtime\python\Scripts;%ROOT%runtime\node;%ROOT%runtime\node\node_modules\.bin;%PATH%"
-set "CLAUDE_CODE_GIT_BASH_PATH=%ROOT%runtime\git\bin\bash.exe"
 
 echo.
 echo === Nastya Orchestrator - Portable ===
@@ -34,19 +33,26 @@ if not exist "%NODE%" (
 )
 echo [OK] Node.js portable
 
-:: Claude auth check (non-blocking)
-"%NODE%" "%CLAUDE_CLI%" auth status >nul 2>&1
+if not exist "%CODEX_CLI%" (
+    echo [ERROR] Codex CLI not found in runtime\node\node_modules\.bin\
+    pause
+    exit /b 1
+)
+echo [OK] Codex CLI portable
+
+:: Codex auth check (non-blocking)
+call "%CODEX_CLI%" login status >nul 2>&1
 if errorlevel 1 (
-    echo [WARN] Claude CLI not authenticated
+    echo [WARN] Codex CLI not authenticated
     echo        Run auth.bat first for full functionality
 ) else (
-    echo [OK] Claude CLI auth
+    echo [OK] Codex CLI auth
 )
 
 :: Create .env via Python (avoids CMD escaping issues)
 if not exist "%ENV_FILE%" (
     echo [SETUP] Creating .env...
-    "%PYTHON%" -c "import secrets; open(r'%ENV_FILE%','w',encoding='utf-8').write('WORKER_TOKEN='+secrets.token_hex(32)+'\nORCH_SERVER_URL=http://localhost:%PORT%\nSERVE_STATIC=true\nNOTES_PATH='+r'%ROOT%data\notes'+'\nCLAUDE_BINARY='+r'%ROOT%runtime\node\node_modules\.bin\claude.cmd'+'\n')"
+    "%PYTHON%" -c "import secrets; open(r'%ENV_FILE%','w',encoding='utf-8').write('WORKER_TOKEN='+secrets.token_hex(32)+'\nORCH_SERVER_URL=http://localhost:%PORT%\nSERVE_STATIC=true\nNOTES_PATH='+r'%ROOT%data\notes'+'\nCODEX_BINARY='+r'%ROOT%runtime\node\node_modules\.bin\codex.cmd'+'\n')"
     echo [OK] .env created
 )
 
