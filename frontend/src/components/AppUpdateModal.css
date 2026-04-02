@@ -2,12 +2,19 @@
   max-width: 640px;
 }
 
+.app-update__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
 .app-update__eyebrow {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
-  margin-bottom: 4px;
 }
 
 .app-update__app-version {
@@ -21,7 +28,6 @@
   color: #efdaff;
   font-size: 12px;
   font-weight: 700;
-  margin-bottom: 8px;
 }
 
 .app-update__loading {

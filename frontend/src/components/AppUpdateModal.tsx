@@ -156,7 +156,13 @@ export function AppUpdateModal({ onClose }: Props) {
   const isRunning = status ? ['queued', 'running'].includes(status.status) : false
   const isFinished = status ? ['completed', 'failed'].includes(status.status) : false
   const canStart = !loadingPreview && !starting && !isRunning && needsUpdate && !hasLocalChanges
-  const modalTitle = needsUpdate ? `Обновление до ${effectiveTargetLabel}` : 'Приложение уже обновлено'
+  const modalTitle = loadingPreview
+    ? 'Проверяем обновления...'
+    : error && !preview && !status
+      ? 'Не удалось проверить обновление'
+      : needsUpdate
+        ? `Обновление до ${effectiveTargetLabel}`
+        : 'Приложение уже обновлено'
 
   return (
     <div className="modal-backdrop" onClick={isRunning ? undefined : onClose}>
@@ -169,10 +175,12 @@ export function AppUpdateModal({ onClose }: Props) {
       >
         <div className="modal__header">
           <div>
-            <div className="app-update__eyebrow">Системное обновление</div>
-            {effectiveAppVersion && (
-              <div className="app-update__app-version">Nastya Orchestrator v{effectiveAppVersion}</div>
-            )}
+            <div className="app-update__meta">
+              <div className="app-update__eyebrow">Системное обновление</div>
+              {effectiveAppVersion && (
+                <div className="app-update__app-version">Nastya Orchestrator v{effectiveAppVersion}</div>
+              )}
+            </div>
             <h2 className="modal__title">{modalTitle}</h2>
           </div>
           <button className="modal__close" onClick={onClose} aria-label="Закрыть">
@@ -186,7 +194,7 @@ export function AppUpdateModal({ onClose }: Props) {
           {loadingPreview && (
             <div className="app-update__loading">
               <span className="app-update__spinner" />
-              <p>Проверяем текущую версию и список изменений...</p>
+              <p>Проверяем GitHub, текущую версию и список изменений...</p>
             </div>
           )}
 
