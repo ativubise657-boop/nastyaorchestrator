@@ -4,6 +4,8 @@ import { useAppVersion, useProjects, useQueueSize, useStore, useWorkerOnline } f
 import { AppUpdateModal } from './AppUpdateModal'
 import './StatusBar.css'
 
+const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000
+
 const INTEGRATIONS = [
   { name: 'Bitrix24 CRM', desc: 'Поиск компаний, контактов и сделок', status: 'active' as const, icon: '🔗' },
   { name: 'Б24 входящие вебхуки', desc: 'POST /api/webhooks/b24 - приём событий', status: 'active' as const, icon: '📥' },
@@ -87,24 +89,34 @@ export function StatusBar() {
     }
 
     let cancelled = false
-    setUpdateBadgeState((prev) => (prev === 'idle' ? 'checking' : prev))
+    const checkForUpdate = (forceVisibleChecking: boolean) => {
+      if (forceVisibleChecking) {
+        setUpdateBadgeState((prev) => (prev === 'idle' || prev === 'error' ? 'checking' : prev))
+      }
 
-    getAppUpdatePreview(appProjectId)
-      .then((preview) => {
-        if (cancelled) return
-        if (preview.check_error) {
-          setUpdateBadgeState('idle')
-          return
-        }
-        setUpdateBadgeState(preview.needs_update ? 'available' : 'current')
-      })
-      .catch(() => {
-        if (cancelled) return
-        setUpdateBadgeState('error')
-      })
+      getAppUpdatePreview(appProjectId)
+        .then((preview) => {
+          if (cancelled) return
+          if (preview.check_error) {
+            setUpdateBadgeState('idle')
+            return
+          }
+          setUpdateBadgeState(preview.needs_update ? 'available' : 'current')
+        })
+        .catch(() => {
+          if (cancelled) return
+          setUpdateBadgeState('error')
+        })
+    }
+
+    checkForUpdate(true)
+    const intervalId = window.setInterval(() => {
+      checkForUpdate(false)
+    }, UPDATE_CHECK_INTERVAL_MS)
 
     return () => {
       cancelled = true
+      window.clearInterval(intervalId)
     }
   }, [appProjectId, getAppUpdatePreview, showUpdate])
 
