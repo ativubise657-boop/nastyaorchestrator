@@ -94,8 +94,9 @@ if not exist "%VENV%\installed.marker" (
 call "%ROOT%tools\codex-npx.cmd" login status >nul 2>&1
 if errorlevel 1 (
     echo [WARN] Codex CLI is not authenticated.
-    echo [WARN] GPT-5 CLI models will not work until you run:
-    echo        npx.cmd -y @openai/codex login
+    echo [WARN] GPT-5 CLI models will not work until authorization is done.
+    echo [WARN] Run:
+    echo        auth.bat
     echo.
 )
 
