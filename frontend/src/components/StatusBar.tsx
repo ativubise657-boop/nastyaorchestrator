@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useProjects, useQueueSize, useWorkerOnline } from '../stores'
 import { AppUpdateModal } from './AppUpdateModal'
 import './StatusBar.css'
@@ -68,6 +69,7 @@ export function StatusBar() {
   const projects = useProjects()
   const [showIntegrations, setShowIntegrations] = useState(false)
   const [showUpdate, setShowUpdate] = useState(false)
+  const modalRoot = typeof document !== 'undefined' ? document.body : null
 
   const hasAppProject = projects.some((project) => project.name === 'nastyaorchestrator')
 
@@ -122,8 +124,12 @@ export function StatusBar() {
         )}
       </div>
 
-      {showIntegrations && <IntegrationsModal onClose={() => setShowIntegrations(false)} />}
-      {showUpdate && <AppUpdateModal onClose={() => setShowUpdate(false)} />}
+      {showIntegrations && modalRoot
+        ? createPortal(<IntegrationsModal onClose={() => setShowIntegrations(false)} />, modalRoot)
+        : null}
+      {showUpdate && modalRoot
+        ? createPortal(<AppUpdateModal onClose={() => setShowUpdate(false)} />, modalRoot)
+        : null}
     </header>
   )
 }
