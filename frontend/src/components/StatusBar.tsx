@@ -109,7 +109,10 @@ export function StatusBar() {
     : 'Обновить приложение'
   const updateButtonTitle = updateBadgeState === 'available'
     ? 'Открыть описание найденного обновления'
-    : 'Проверить обновление и открыть окно установки'
+    : updateBadgeState === 'checking'
+      ? 'Проверяем наличие обновления'
+      : 'Проверить обновление и открыть окно установки'
+  const showUpdateBadge = updateBadgeState === 'available'
 
   return (
     <header className="statusbar">
@@ -123,15 +126,16 @@ export function StatusBar() {
 
       <div className="statusbar__status">
         <button
-          className={`statusbar__action statusbar__action--update ${updateBadgeState === 'available' ? 'statusbar__action--update-available' : ''}`}
+          className={`statusbar__action statusbar__action--update ${showUpdateBadge ? 'statusbar__action--update-available' : 'statusbar__action--icon'} ${updateBadgeState === 'checking' ? 'statusbar__action--update-checking' : ''}`}
           onClick={() => setShowUpdate(true)}
           title={updateButtonTitle}
+          aria-label={updateButtonLabel}
           disabled={!hasAppProject}
         >
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 2.5a5.5 5.5 0 015.35 4.2M8 13.5a5.5 5.5 0 01-5.35-4.2M11 3.5h2v2M3 10.5H1v2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <span>{updateButtonLabel}</span>
+          {showUpdateBadge && <span>{updateButtonLabel}</span>}
         </button>
 
         <button

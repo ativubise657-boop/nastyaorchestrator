@@ -152,6 +152,12 @@
   color: #f0d6ff;
 }
 
+.statusbar__action--icon {
+  width: 32px;
+  justify-content: center;
+  padding: 0;
+}
+
 .statusbar__action--update-available {
   background: linear-gradient(180deg, rgba(226, 232, 240, 0.18), rgba(148, 163, 184, 0.12));
   border-color: rgba(226, 232, 240, 0.3);
@@ -162,6 +168,10 @@
 .statusbar__action--update-available:hover:not(:disabled) {
   background: linear-gradient(180deg, rgba(241, 245, 249, 0.24), rgba(148, 163, 184, 0.16));
   border-color: rgba(241, 245, 249, 0.38);
+}
+
+.statusbar__action--update-checking svg {
+  animation: statusbar-update-spin 0.9s linear infinite;
 }
 
 /* ===== Модалка интеграций ===== */
@@ -277,6 +287,12 @@
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 2px;
+}
+
+@keyframes statusbar-update-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 900px) {
