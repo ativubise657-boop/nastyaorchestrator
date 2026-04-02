@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useAppVersion, useProjects, useQueueSize, useStore, useWorkerOnline } from '../stores'
+import { useAppVersion, useProjects, useQueueSize, useStore, useWorkerOnline, type AppUpdatePreview } from '../stores'
 import { AppUpdateModal } from './AppUpdateModal'
 import './StatusBar.css'
 
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000
+const LAST_NOTIFIED_UPDATE_KEY = 'nastya:last-notified-update-sha'
 
 const INTEGRATIONS = [
   { name: 'Bitrix24 CRM', desc: 'Поиск компаний, контактов и сделок', status: 'active' as const, icon: '🔗' },
@@ -17,7 +18,7 @@ const INTEGRATIONS = [
   { name: 'Email', desc: 'Отправка писем через SMTP', status: 'planned' as const, icon: '📧' },
 ]
 
-type UpdateBadgeState = 'idle' | 'checking' | 'available' | 'current' | 'error'
+type UpdateBadgeState = 'idle' | 'available' | 'current' | 'error'
 
 function IntegrationsModal({ onClose }: { onClose: () => void }) {
   const active = INTEGRATIONS.filter((item) => item.status === 'active')
@@ -76,6 +77,8 @@ export function StatusBar() {
   const [showIntegrations, setShowIntegrations] = useState(false)
   const [showUpdate, setShowUpdate] = useState(false)
   const [updateBadgeState, setUpdateBadgeState] = useState<UpdateBadgeState>('idle')
+  const [latestPreview, setLatestPreview] = useState<AppUpdatePreview | null>(null)
+  const latestPreviewRef = useRef<AppUpdatePreview | null>(null)
   const modalRoot = typeof document !== 'undefined' ? document.body : null
 
   const appProject = projects.find((project) => project.name === 'nastyaorchestrator') ?? null
@@ -83,35 +86,50 @@ export function StatusBar() {
   const hasAppProject = Boolean(appProject)
 
   useEffect(() => {
+    latestPreviewRef.current = latestPreview
+  }, [latestPreview])
+
+  useEffect(() => {
     if (!appProjectId || showUpdate) {
-      if (!appProjectId) setUpdateBadgeState('idle')
+      if (!appProjectId) {
+        setUpdateBadgeState('idle')
+        setLatestPreview(null)
+      }
       return
     }
 
     let cancelled = false
-    const checkForUpdate = (forceVisibleChecking: boolean) => {
-      if (forceVisibleChecking) {
-        setUpdateBadgeState((prev) => (prev === 'idle' || prev === 'error' ? 'checking' : prev))
-      }
-
+    const checkForUpdate = () => {
       getAppUpdatePreview(appProjectId)
         .then((preview) => {
           if (cancelled) return
           if (preview.check_error) {
-            setUpdateBadgeState('idle')
+            if (!latestPreviewRef.current) {
+              setUpdateBadgeState('idle')
+            }
             return
+          }
+          setLatestPreview(preview)
+          if (preview.needs_update) {
+            const lastNotified = window.localStorage.getItem(LAST_NOTIFIED_UPDATE_KEY)
+            if (lastNotified !== preview.target_sha) {
+              window.localStorage.setItem(LAST_NOTIFIED_UPDATE_KEY, preview.target_sha)
+              setShowUpdate(true)
+            }
           }
           setUpdateBadgeState(preview.needs_update ? 'available' : 'current')
         })
         .catch(() => {
           if (cancelled) return
-          setUpdateBadgeState('error')
+          if (!latestPreviewRef.current) {
+            setUpdateBadgeState('error')
+          }
         })
     }
 
-    checkForUpdate(true)
+    checkForUpdate()
     const intervalId = window.setInterval(() => {
-      checkForUpdate(false)
+      checkForUpdate()
     }, UPDATE_CHECK_INTERVAL_MS)
 
     return () => {
@@ -125,9 +143,7 @@ export function StatusBar() {
     : 'Обновить приложение'
   const updateButtonTitle = updateBadgeState === 'available'
     ? 'Открыть описание найденного обновления'
-    : updateBadgeState === 'checking'
-      ? 'Проверяем наличие обновления'
-      : 'Проверить обновление и открыть окно установки'
+    : 'Проверить обновление и открыть окно установки'
   const showUpdateBadge = updateBadgeState === 'available'
 
   return (
@@ -142,7 +158,7 @@ export function StatusBar() {
 
       <div className="statusbar__status">
         <button
-          className={`statusbar__action statusbar__action--update ${showUpdateBadge ? 'statusbar__action--update-available' : 'statusbar__action--icon'} ${updateBadgeState === 'checking' ? 'statusbar__action--update-checking' : ''}`}
+          className={`statusbar__action statusbar__action--update ${showUpdateBadge ? 'statusbar__action--update-available' : 'statusbar__action--icon'}`}
           onClick={() => setShowUpdate(true)}
           title={updateButtonTitle}
           aria-label={updateButtonLabel}
@@ -189,7 +205,7 @@ export function StatusBar() {
         ? createPortal(<IntegrationsModal onClose={() => setShowIntegrations(false)} />, modalRoot)
         : null}
       {showUpdate && modalRoot
-        ? createPortal(<AppUpdateModal onClose={() => setShowUpdate(false)} />, modalRoot)
+        ? createPortal(<AppUpdateModal onClose={() => setShowUpdate(false)} initialPreview={latestPreview} />, modalRoot)
         : null}
     </header>
   )

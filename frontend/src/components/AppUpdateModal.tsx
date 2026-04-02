@@ -43,9 +43,10 @@ function formatReleaseTitle(note: AppUpdateReleaseNote) {
 
 interface Props {
   onClose: () => void
+  initialPreview?: AppUpdatePreview | null
 }
 
-export function AppUpdateModal({ onClose }: Props) {
+export function AppUpdateModal({ onClose, initialPreview = null }: Props) {
   const appVersion = useAppVersion()
   const projects = useProjects()
   const getAppUpdatePreview = useStore((s) => s.getAppUpdatePreview)
@@ -54,9 +55,9 @@ export function AppUpdateModal({ onClose }: Props) {
 
   const project = projects.find((item) => item.name === APP_PROJECT_NAME) ?? null
 
-  const [preview, setPreview] = useState<AppUpdatePreview | null>(null)
-  const [status, setStatus] = useState<AppUpdateStatus | null>(null)
-  const [loadingPreview, setLoadingPreview] = useState(true)
+  const [preview, setPreview] = useState<AppUpdatePreview | null>(initialPreview)
+  const [status, setStatus] = useState<AppUpdateStatus | null>(initialPreview?.active_status ?? null)
+  const [loadingPreview, setLoadingPreview] = useState(!initialPreview)
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reloadTimerRef = useRef<number | null>(null)
@@ -69,12 +70,23 @@ export function AppUpdateModal({ onClose }: Props) {
     }
 
     let cancelled = false
-    setLoadingPreview(true)
-    setError(null)
+    const hasSeedPreview = Boolean(initialPreview)
+
+    if (initialPreview) {
+      setPreview(initialPreview)
+      setStatus(initialPreview.active_status ?? null)
+      setLoadingPreview(false)
+    } else {
+      setLoadingPreview(true)
+      setError(null)
+    }
 
     getAppUpdatePreview(project.id)
       .then((data) => {
         if (cancelled) return
+        if (hasSeedPreview && initialPreview?.needs_update && data.check_error) {
+          return
+        }
         setPreview(data)
         if (data.active_status) {
           setStatus(data.active_status)
@@ -82,10 +94,11 @@ export function AppUpdateModal({ onClose }: Props) {
       })
       .catch((err) => {
         if (cancelled) return
+        if (hasSeedPreview) return
         setError(extractApiError(err))
       })
       .finally(() => {
-        if (!cancelled) setLoadingPreview(false)
+        if (!cancelled && !hasSeedPreview) setLoadingPreview(false)
       })
 
     return () => {
@@ -94,7 +107,7 @@ export function AppUpdateModal({ onClose }: Props) {
         window.clearTimeout(reloadTimerRef.current)
       }
     }
-  }, [getAppUpdatePreview, project])
+  }, [getAppUpdatePreview, initialPreview, project])
 
   useEffect(() => {
     if (!project || !status || !['queued', 'running'].includes(status.status)) return
