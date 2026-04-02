@@ -213,3 +213,4 @@ class HealthResponse(BaseModel):
     worker: WorkerStatus
     uptime: float
     queue_size: int
+    app_version: str

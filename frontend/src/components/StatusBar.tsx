@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useProjects, useQueueSize, useWorkerOnline } from '../stores'
+import { useAppVersion, useProjects, useQueueSize, useWorkerOnline } from '../stores'
 import { AppUpdateModal } from './AppUpdateModal'
 import './StatusBar.css'
 
@@ -66,6 +66,7 @@ function IntegrationsModal({ onClose }: { onClose: () => void }) {
 export function StatusBar() {
   const online = useWorkerOnline()
   const queueSize = useQueueSize()
+  const appVersion = useAppVersion()
   const projects = useProjects()
   const [showIntegrations, setShowIntegrations] = useState(false)
   const [showUpdate, setShowUpdate] = useState(false)
@@ -77,7 +78,10 @@ export function StatusBar() {
     <header className="statusbar">
       <div className="statusbar__brand">
         <img src="/avatar-nastya.png" alt="Настя" className="statusbar__avatar" />
-        <span className="statusbar__title">Nastya Orchestrator</span>
+        <div className="statusbar__brand-text">
+          <span className="statusbar__title">Nastya Orchestrator</span>
+          {appVersion && <span className="statusbar__version">v{appVersion}</span>}
+        </div>
       </div>
 
       <div className="statusbar__status">

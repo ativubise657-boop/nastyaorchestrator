@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  useAppVersion,
   useProjects,
   useStore,
   type AppUpdatePreview,
@@ -45,6 +46,7 @@ interface Props {
 }
 
 export function AppUpdateModal({ onClose }: Props) {
+  const appVersion = useAppVersion()
   const projects = useProjects()
   const getAppUpdatePreview = useStore((s) => s.getAppUpdatePreview)
   const startAppUpdate = useStore((s) => s.startAppUpdate)
@@ -145,6 +147,7 @@ export function AppUpdateModal({ onClose }: Props) {
 
   const effectiveCurrentLabel = status?.current_label ?? preview?.current_label ?? '...'
   const effectiveTargetLabel = status?.target_label ?? preview?.target_label ?? '...'
+  const effectiveAppVersion = appVersion ?? status?.current_version ?? preview?.current_version ?? null
   const effectiveReleaseNotes = status?.release_notes ?? preview?.release_notes ?? []
   const effectiveCommits = status?.commits ?? preview?.commits ?? []
   const blockedReason = status?.blocked_reason ?? preview?.blocked_reason ?? null
@@ -167,6 +170,9 @@ export function AppUpdateModal({ onClose }: Props) {
         <div className="modal__header">
           <div>
             <div className="app-update__eyebrow">Системное обновление</div>
+            {effectiveAppVersion && (
+              <div className="app-update__app-version">Nastya Orchestrator v{effectiveAppVersion}</div>
+            )}
             <h2 className="modal__title">{modalTitle}</h2>
           </div>
           <button className="modal__close" onClick={onClose} aria-label="Закрыть">
@@ -187,7 +193,7 @@ export function AppUpdateModal({ onClose }: Props) {
           {!loadingPreview && (
             <>
               <div className="app-update__version-row">
-                <div className="app-update__version-card">
+                <div className={`app-update__version-card ${!needsUpdate ? 'app-update__version-card--success' : ''}`}>
                   <span className="app-update__version-label">Сейчас</span>
                   <strong>{effectiveCurrentLabel}</strong>
                 </div>

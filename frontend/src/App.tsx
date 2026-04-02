@@ -54,6 +54,9 @@ export default function App() {
             data.worker.queue_size ?? 0,
           )
         }
+        if (data?.app_version) {
+          useStore.getState().setAppVersion(data.app_version)
+        }
       })
       .catch(() => {})
   }, [])

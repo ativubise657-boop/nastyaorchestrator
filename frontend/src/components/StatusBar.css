@@ -19,6 +19,13 @@
   color: var(--text-secondary);
 }
 
+.statusbar__brand-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .statusbar__avatar {
   width: 24px;
   height: 24px;
@@ -32,6 +39,21 @@
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.01em;
+}
+
+.statusbar__version {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(114, 46, 133, 0.16);
+  border: 1px solid rgba(155, 77, 202, 0.22);
+  color: #e3c4ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
 }
 
 /* Правая часть — статус воркера */
@@ -247,6 +269,10 @@
 
 @media (max-width: 900px) {
   .statusbar__action span:last-child {
+    display: none;
+  }
+
+  .statusbar__version {
     display: none;
   }
 

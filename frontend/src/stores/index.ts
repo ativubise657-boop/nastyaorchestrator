@@ -195,8 +195,10 @@ interface AppStore {
   workerOnline: boolean
   queueSize: number
   taskPhase: string | null
+  appVersion: string | null
   setWorkerStatus: (online: boolean, queueSize?: number) => void
   setTaskPhase: (phase: string | null) => void
+  setAppVersion: (version: string | null) => void
 
   // Модель
   selectedModel: ChatModel
@@ -711,12 +713,14 @@ export const useStore = create<AppStore>((set, get) => ({
   workerOnline: false,
   queueSize: 0,
   taskPhase: null,
+  appVersion: null,
 
   setWorkerStatus: (online, queueSize = 0) => {
     set({ workerOnline: online, queueSize })
   },
 
   setTaskPhase: (phase) => set({ taskPhase: phase }),
+  setAppVersion: (version) => set({ appVersion: version }),
 
   // --- Модель ---
   selectedModel: normalizeChatModel(localStorage.getItem('selectedModel')),
@@ -812,6 +816,7 @@ export const useMessages = () => useStore(useShallow((s) => s.messages))
 export const useTasks = () => useStore(useShallow((s) => s.tasks))
 export const useWorkerOnline = () => useStore((s) => s.workerOnline)
 export const useQueueSize = () => useStore((s) => s.queueSize)
+export const useAppVersion = () => useStore((s) => s.appVersion)
 export const useSidebarOpen = () => useStore((s) => s.sidebarOpen)
 export const useDocuments = () => useStore(useShallow((s) => s.documents))
 export const useSelectedModel = () => useStore((s) => s.selectedModel)
