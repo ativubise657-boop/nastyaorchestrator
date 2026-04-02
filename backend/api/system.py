@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from backend.core.auth import verify_worker
-from backend.core.config import APP_VERSION, WORKER_HEARTBEAT_TTL
+from backend.core.config import WORKER_HEARTBEAT_TTL, get_local_app_version
 from backend.models import HeartbeatRequest, HealthResponse, WorkerStatus
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ async def health(request: Request):
         worker=worker_status,
         uptime=uptime,
         queue_size=queue.size(),
-        app_version=APP_VERSION,
+        app_version=get_local_app_version(),
     )
 
 

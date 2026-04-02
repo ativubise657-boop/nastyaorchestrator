@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
-from backend.core.config import APP_VERSION, BASE_DIR
+from backend.core.config import APP_VERSION, BASE_DIR, get_local_app_version, resolve_app_version
 from backend.models import Project, ProjectCreate, ProjectUpdate
 
 logger = logging.getLogger(__name__)
@@ -255,11 +255,7 @@ def _select_release_notes(
 
 
 def _read_local_app_version(project_path: Path) -> str:
-    try:
-        config_text = (project_path / "backend" / "core" / "config.py").read_text(encoding="utf-8", errors="ignore")
-        return _extract_app_version(config_text) or APP_VERSION
-    except Exception:
-        return APP_VERSION
+    return get_local_app_version(project_path)
 
 
 def _format_version_label(version: str | None, sha: str) -> str:
@@ -399,12 +395,20 @@ async def _build_app_update_preview(project_path: Path) -> dict:
     current_version = _read_local_app_version(project_path)
     target_version = current_version
     local_changelog = _read_local_text(project_path, APP_CHANGELOG_FILE)
+    remote_changelog = await _read_git_text(project_path, target_ref, APP_CHANGELOG_FILE)
     try:
         remote_config = await _read_git_text(project_path, target_ref, "backend/core/config.py")
-        target_version = _extract_app_version(remote_config or "") or APP_VERSION
+        target_version = resolve_app_version(
+            config_text=remote_config,
+            changelog_text=remote_changelog,
+            fallback=APP_VERSION,
+        )
     except Exception:
-        target_version = APP_VERSION
-    remote_changelog = await _read_git_text(project_path, target_ref, APP_CHANGELOG_FILE)
+        target_version = resolve_app_version(
+            config_text=None,
+            changelog_text=remote_changelog,
+            fallback=APP_VERSION,
+        )
     needs_update = current_sha != target_sha
     release_notes = _select_release_notes(
         remote_changelog if needs_update and remote_changelog else local_changelog,
