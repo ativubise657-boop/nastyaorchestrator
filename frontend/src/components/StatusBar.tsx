@@ -92,6 +92,10 @@ export function StatusBar() {
     getAppUpdatePreview(appProjectId)
       .then((preview) => {
         if (cancelled) return
+        if (preview.check_error) {
+          setUpdateBadgeState('idle')
+          return
+        }
         setUpdateBadgeState(preview.needs_update ? 'available' : 'current')
       })
       .catch(() => {

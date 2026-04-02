@@ -268,6 +268,7 @@ export interface AppUpdatePreview {
   origin_url: string
   needs_update: boolean
   local_changes: boolean
+  check_error: string | null
   blocked_reason: string | null
   release_notes: AppUpdateReleaseNote[]
   commit_count: number
@@ -299,6 +300,7 @@ export interface AppUpdateStatus {
   origin_url: string
   needs_update: boolean
   local_changes: boolean
+  check_error: string | null
   blocked_reason: string | null
   release_notes: AppUpdateReleaseNote[]
   commit_count: number

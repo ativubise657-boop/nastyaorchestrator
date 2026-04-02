@@ -76,14 +76,17 @@ async def _run_command(*args: str, cwd: Path | None = None, timeout: int = 120) 
     env.setdefault("GCM_INTERACTIVE", "Never")
     env.setdefault("GIT_ASKPASS", "")
     env.setdefault("SSH_ASKPASS", "")
+    command = list(args)
     git_ssh_command = env.get("APP_GIT_SSH_COMMAND") or env.get("GIT_SSH_COMMAND")
-    if git_ssh_command:
-        env["GIT_SSH_COMMAND"] = git_ssh_command
+    if command and Path(command[0]).name.lower() == "git" and git_ssh_command:
+        normalized_ssh_command = _normalize_windows_ssh_command(git_ssh_command)
+        command = [command[0], "-c", f"core.sshCommand={normalized_ssh_command}", *command[1:]]
+        env.pop("GIT_SSH_COMMAND", None)
     else:
         env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
 
     proc = await asyncio.create_subprocess_exec(
-        *args,
+        *command,
         cwd=str(cwd) if cwd else None,
         env=env,
         stdout=asyncio.subprocess.PIPE,
@@ -264,6 +267,83 @@ def _format_version_label(version: str | None, sha: str) -> str:
     return f"v{version} ({short_sha})" if version else short_sha
 
 
+def _normalize_windows_ssh_command(command: str) -> str:
+    if os.name != "nt":
+        return command
+
+    def replace_drive(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        drive = match.group(2).upper()
+        return f"{prefix}{drive}:/"
+
+    return re.sub(r'(^|[\s"])\/([a-zA-Z])\/', replace_drive, command)
+
+
+def _format_update_check_error(exc: Exception) -> str:
+    raw = str(exc).strip()
+    lowered = raw.lower()
+
+    if "could not read from remote repository" in lowered or "repository not found" in lowered:
+        return "Не удалось связаться с GitHub по SSH. Приложение работает дальше, но проверить обновление сейчас нельзя."
+    if "permission denied" in lowered or "publickey" in lowered:
+        return "GitHub не принял SSH-ключ. Приложение работает дальше, но обновление временно недоступно."
+    if "timed out" in lowered or "timeout" in lowered:
+        return "GitHub не ответил вовремя. Приложение работает дальше, попробуй проверить обновление позже."
+    return "Не удалось проверить GitHub. Приложение продолжает работать, но обновление временно недоступно."
+
+
+async def _build_app_update_fallback_preview(project_path: Path, check_error: str) -> dict:
+    branch = "master"
+    origin_url = ""
+    current_sha = ""
+
+    try:
+        branch_out, _ = await _run_command("git", "branch", "--show-current", cwd=project_path, timeout=60)
+        branch = branch_out or branch
+    except Exception:
+        pass
+
+    try:
+        origin_out, _ = await _run_command("git", "remote", "get-url", "origin", cwd=project_path, timeout=60)
+        origin_url = origin_out
+    except Exception:
+        pass
+
+    try:
+        current_sha_out, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
+        current_sha = current_sha_out
+    except Exception:
+        current_sha = ""
+
+    current_version = _read_local_app_version(project_path)
+    local_changelog = _read_local_text(project_path, APP_CHANGELOG_FILE)
+    release_notes = _select_release_notes(
+        local_changelog,
+        current_version=current_version,
+        target_version=current_version,
+        needs_update=False,
+    )
+    current_label = _format_version_label(current_version, current_sha)
+
+    return {
+        "current_version": current_version,
+        "target_version": current_version,
+        "current_sha": current_sha,
+        "target_sha": current_sha,
+        "current_label": current_label,
+        "target_label": "Проверка недоступна",
+        "branch": branch,
+        "origin_url": origin_url,
+        "needs_update": False,
+        "local_changes": False,
+        "check_error": check_error,
+        "blocked_reason": check_error,
+        "release_notes": release_notes,
+        "commit_count": 0,
+        "commits": [],
+    }
+
+
 def _get_update_store(app) -> dict[str, dict]:
     store = getattr(app.state, "app_updates", None)
     if store is None:
@@ -308,7 +388,11 @@ async def _build_app_update_preview(project_path: Path) -> dict:
     origin_out, _ = await _run_command("git", "remote", "get-url", "origin", cwd=project_path, timeout=60)
     current_sha, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
 
-    await _run_command("git", "fetch", "origin", branch, cwd=project_path, timeout=300)
+    try:
+        await _run_command("git", "fetch", "origin", branch, cwd=project_path, timeout=300)
+    except Exception as exc:
+        logger.warning("App update preview fallback: git fetch failed: %s", exc)
+        return await _build_app_update_fallback_preview(project_path, _format_update_check_error(exc))
     target_ref = f"origin/{branch}"
     target_sha, _ = await _run_command("git", "rev-parse", target_ref, cwd=project_path, timeout=60)
 
@@ -367,6 +451,7 @@ async def _build_app_update_preview(project_path: Path) -> dict:
         "origin_url": origin_out,
         "needs_update": needs_update,
         "local_changes": local_changes,
+        "check_error": None,
         "blocked_reason": (
             "Есть локальные изменения. Сначала закоммить их или убери перед обновлением."
             if local_changes
@@ -400,6 +485,9 @@ async def _run_app_update_job(app, project_id: str, operation_id: str) -> None:
 
         if preview["local_changes"]:
             raise RuntimeError(preview["blocked_reason"] or "Есть локальные изменения")
+
+        if preview.get("check_error"):
+            raise RuntimeError(preview["check_error"])
 
         if not preview["needs_update"]:
             _set_update_status(
@@ -748,7 +836,13 @@ async def app_update_status(project_id: str, request: Request):
         "status": "idle",
         "phase": "idle",
         "progress": 0,
-        "message": "Доступно обновление." if preview["needs_update"] else "Уже установлена последняя версия.",
+        "message": (
+            "Проверка GitHub временно недоступна."
+            if preview.get("check_error")
+            else "Доступно обновление."
+            if preview["needs_update"]
+            else "Уже установлена последняя версия."
+        ),
         "error": None,
         "updated": False,
         "restarting": False,
@@ -776,6 +870,9 @@ async def start_app_update(project_id: str, request: Request):
     except Exception as exc:
         logger.exception("App update start failed")
         raise HTTPException(status_code=500, detail=f"Не удалось запустить обновление: {exc}") from exc
+
+    if preview.get("check_error"):
+        raise HTTPException(status_code=409, detail=preview["check_error"])
 
     operation_id = str(uuid.uuid4())
     status = _set_update_status(

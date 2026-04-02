@@ -150,16 +150,19 @@ export function AppUpdateModal({ onClose }: Props) {
   const effectiveAppVersion = appVersion ?? status?.current_version ?? preview?.current_version ?? null
   const effectiveReleaseNotes = status?.release_notes ?? preview?.release_notes ?? []
   const effectiveCommits = status?.commits ?? preview?.commits ?? []
-  const blockedReason = status?.blocked_reason ?? preview?.blocked_reason ?? null
+  const checkError = status?.check_error ?? preview?.check_error ?? null
+  const blockedReason = status?.blocked_reason ?? preview?.blocked_reason ?? checkError ?? null
   const hasLocalChanges = status?.local_changes ?? preview?.local_changes ?? false
   const needsUpdate = status?.needs_update ?? preview?.needs_update ?? false
   const isRunning = status ? ['queued', 'running'].includes(status.status) : false
   const isFinished = status ? ['completed', 'failed'].includes(status.status) : false
-  const canStart = !loadingPreview && !starting && !isRunning && needsUpdate && !hasLocalChanges
+  const canStart = !loadingPreview && !starting && !isRunning && needsUpdate && !hasLocalChanges && !checkError
   const modalTitle = loadingPreview
     ? 'Проверяем обновления...'
-    : error && !preview && !status
-      ? 'Не удалось проверить обновление'
+    : checkError
+      ? 'Проверка обновления недоступна'
+      : error && !preview && !status
+        ? 'Не удалось проверить обновление'
       : needsUpdate
         ? `Обновление до ${effectiveTargetLabel}`
         : 'Приложение уже обновлено'
@@ -223,14 +226,16 @@ export function AppUpdateModal({ onClose }: Props) {
               {!status && (
                 <div className="app-update__summary">
                   <p className="app-update__summary-text">
-                    {needsUpdate
+                    {checkError
+                      ? 'Приложение работает как обычно. Сейчас не получилось связаться с GitHub, поэтому обновление временно недоступно.'
+                      : needsUpdate
                       ? 'Загрузим изменения из GitHub, при необходимости обновим зависимости, пересоберём интерфейс и мягко перезапустим приложение.'
                       : 'Приложение уже на последней версии. Можно просто закрыть окно.'}
                   </p>
 
                   <div className="app-update__section">
                     <div className="app-update__section-title">
-                      {needsUpdate ? 'Что изменится' : 'Текущая версия'}
+                      {checkError ? 'Текущая версия' : needsUpdate ? 'Что изменится' : 'Текущая версия'}
                     </div>
                     {effectiveReleaseNotes.length > 0 ? (
                       <div className="app-update__release-list">
@@ -263,7 +268,9 @@ export function AppUpdateModal({ onClose }: Props) {
                       </ul>
                     ) : (
                       <div className="app-update__empty-note">
-                        {needsUpdate
+                        {checkError
+                          ? 'Когда доступ к GitHub восстановится, здесь снова появится описание новой версии.'
+                          : needsUpdate
                           ? 'Описание релиза пока не заполнено, но новая версия уже обнаружена.'
                           : 'Для этой версии ещё не добавили отдельное описание релиза.'}
                       </div>
@@ -348,7 +355,9 @@ export function AppUpdateModal({ onClose }: Props) {
                     ? 'Повторить'
                     : isFinished
                       ? 'Готово'
-                      : 'Обновить'}
+                      : checkError
+                        ? 'Недоступно'
+                        : 'Обновить'}
             </button>
           </div>
         </div>
