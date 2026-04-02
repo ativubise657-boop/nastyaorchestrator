@@ -8,13 +8,11 @@ export function ProjectList() {
   const selectedId = useSelectedProjectId()
   const selectProject = useStore((s) => s.selectProject)
   const deleteProject = useStore((s) => s.deleteProject)
-  const updateApp = useStore((s) => s.updateApp)
   const projectsLoading = useStore((s) => s.projectsLoading)
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     project: Project
     x: number
@@ -46,21 +44,6 @@ export function ProjectList() {
       await deleteProject(project.id)
     } finally {
       setDeletingId(null)
-    }
-  }
-
-  const handleUpdateApp = async (project: Project) => {
-    if (!confirm('Скачать обновление из GitHub, пересобрать приложение и перезапустить сервисы?')) return
-    setContextMenu(null)
-    setUpdatingId(project.id)
-    try {
-      const result = await updateApp(project.id)
-      alert(result.message)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Не удалось обновить приложение'
-      alert(message)
-    } finally {
-      setUpdatingId(null)
     }
   }
 
@@ -124,7 +107,7 @@ export function ProjectList() {
               )}
             </div>
 
-            {(deletingId === project.id || updatingId === project.id) && (
+            {deletingId === project.id && (
               <span className="project-item__spinner" />
             )}
           </button>
@@ -142,17 +125,6 @@ export function ProjectList() {
             className="context-menu"
             style={{ top: contextMenu.y, left: contextMenu.x }}
           >
-            {contextMenu.project.name === 'nastyaorchestrator' && (
-              <button
-                className="context-menu__item"
-                onClick={() => handleUpdateApp(contextMenu.project)}
-              >
-                <svg viewBox="0 0 16 16" fill="none">
-                  <path d="M8 3v3m0 0l2-2M8 6L6 4M3.5 8a4.5 4.5 0 109 0" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Обновить приложение
-              </button>
-            )}
             <button
               className="context-menu__item"
               onClick={() => handleEdit(contextMenu.project)}

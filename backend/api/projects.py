@@ -3,6 +3,8 @@ CRUD проектов + auto-clone из git_url.
 """
 import asyncio
 import logging
+import os
+import re
 import subprocess
 import sys
 import uuid
@@ -11,7 +13,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
-from backend.core.config import BASE_DIR
+from backend.core.config import APP_VERSION, BASE_DIR
 from backend.models import Project, ProjectCreate, ProjectUpdate
 
 logger = logging.getLogger(__name__)
@@ -68,9 +70,21 @@ async def _clone_or_pull(git_url: str, name: str) -> str:
 
 
 async def _run_command(*args: str, cwd: Path | None = None, timeout: int = 120) -> tuple[str, str]:
+    env = os.environ.copy()
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    env.setdefault("GCM_INTERACTIVE", "Never")
+    env.setdefault("GIT_ASKPASS", "")
+    env.setdefault("SSH_ASKPASS", "")
+    git_ssh_command = env.get("APP_GIT_SSH_COMMAND") or env.get("GIT_SSH_COMMAND")
+    if git_ssh_command:
+        env["GIT_SSH_COMMAND"] = git_ssh_command
+    else:
+        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+
     proc = await asyncio.create_subprocess_exec(
         *args,
         cwd=str(cwd) if cwd else None,
+        env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -96,7 +110,55 @@ def _schedule_app_restart() -> bool:
     return True
 
 
-async def _update_local_app_repo(project_path: Path) -> dict:
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_app_version(config_text: str) -> str | None:
+    match = re.search(r'APP_VERSION:\s*str\s*=\s*["\']([^"\']+)["\']', config_text)
+    return match.group(1) if match else None
+
+
+def _read_local_app_version(project_path: Path) -> str:
+    try:
+        config_text = (project_path / "backend" / "core" / "config.py").read_text(encoding="utf-8", errors="ignore")
+        return _extract_app_version(config_text) or APP_VERSION
+    except Exception:
+        return APP_VERSION
+
+
+def _format_version_label(version: str | None, sha: str) -> str:
+    short_sha = sha[:7] if sha else "unknown"
+    return f"v{version} ({short_sha})" if version else short_sha
+
+
+def _get_update_store(app) -> dict[str, dict]:
+    store = getattr(app.state, "app_updates", None)
+    if store is None:
+        store = {}
+        app.state.app_updates = store
+    return store
+
+
+def _get_update_status(app, project_id: str) -> dict | None:
+    return _get_update_store(app).get(project_id)
+
+
+def _set_update_status(app, project_id: str, **patch) -> dict:
+    store = _get_update_store(app)
+    current = dict(store.get(project_id, {}))
+    logs = current.get("logs", [])
+    log_line = patch.pop("append_log", None)
+    if log_line:
+        logs = [*logs, log_line]
+    current.update(patch)
+    current["logs"] = logs
+    current["updated_at"] = _now_iso()
+    store[project_id] = current
+    return current
+
+
+async def _build_app_update_preview(project_path: Path) -> dict:
     if not (project_path / ".git").exists():
         raise RuntimeError(f"Path is not a git repository: {project_path}")
 
@@ -108,68 +170,241 @@ async def _update_local_app_repo(project_path: Path) -> dict:
         cwd=project_path,
         timeout=60,
     )
-    if status_out:
-        raise RuntimeError("Local changes detected. Commit or stash them before updating the app.")
-
+    local_changes = bool(status_out)
     branch_out, _ = await _run_command("git", "branch", "--show-current", cwd=project_path, timeout=60)
     branch = branch_out or "master"
     origin_out, _ = await _run_command("git", "remote", "get-url", "origin", cwd=project_path, timeout=60)
-    before_out, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
+    current_sha, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
 
     await _run_command("git", "fetch", "origin", branch, cwd=project_path, timeout=300)
-    pull_out, _ = await _run_command(
-        "git",
-        "pull",
-        "--ff-only",
-        "origin",
-        branch,
-        cwd=project_path,
-        timeout=300,
-    )
-    after_out, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
+    target_ref = f"origin/{branch}"
+    target_sha, _ = await _run_command("git", "rev-parse", target_ref, cwd=project_path, timeout=60)
 
-    changed_files: list[str] = []
-    if before_out != after_out:
+    current_version = _read_local_app_version(project_path)
+    target_version = current_version
+    try:
+        remote_config, _ = await _run_command(
+            "git",
+            "show",
+            f"{target_ref}:backend/core/config.py",
+            cwd=project_path,
+            timeout=60,
+        )
+        target_version = _extract_app_version(remote_config) or APP_VERSION
+    except Exception:
+        target_version = APP_VERSION
+
+    commits: list[dict[str, str]] = []
+    commit_count = 0
+    if current_sha != target_sha:
+        log_out, _ = await _run_command(
+            "git",
+            "log",
+            "--format=%H%x09%s",
+            f"{current_sha}..{target_ref}",
+            "--max-count",
+            "5",
+            cwd=project_path,
+            timeout=60,
+        )
+        count_out, _ = await _run_command(
+            "git",
+            "rev-list",
+            "--count",
+            f"{current_sha}..{target_ref}",
+            cwd=project_path,
+            timeout=60,
+        )
+        commit_count = int(count_out or "0")
+        for line in log_out.splitlines():
+            sha, _, summary = line.partition("\t")
+            if sha and summary:
+                commits.append({"sha": sha[:7], "summary": summary})
+
+    return {
+        "current_version": current_version,
+        "target_version": target_version,
+        "current_sha": current_sha,
+        "target_sha": target_sha,
+        "current_label": _format_version_label(current_version, current_sha),
+        "target_label": _format_version_label(target_version, target_sha),
+        "branch": branch,
+        "origin_url": origin_out,
+        "needs_update": current_sha != target_sha,
+        "local_changes": local_changes,
+        "blocked_reason": (
+            "Есть локальные изменения. Сначала закоммить их или убери перед обновлением."
+            if local_changes
+            else None
+        ),
+        "commit_count": commit_count,
+        "commits": commits,
+    }
+
+
+async def _run_app_update_job(app, project_id: str, operation_id: str) -> None:
+    try:
+        preview = await _build_app_update_preview(BASE_DIR)
+        _set_update_status(
+            app,
+            project_id,
+            operation_id=operation_id,
+            status="running",
+            phase="prepare",
+            progress=8,
+            message="Проверяем локальную версию и GitHub...",
+            error=None,
+            updated=False,
+            restarting=False,
+            changed_files=[],
+            started_at=_now_iso(),
+            **preview,
+            append_log="Проверяем текущую версию приложения",
+        )
+
+        if preview["local_changes"]:
+            raise RuntimeError(preview["blocked_reason"] or "Есть локальные изменения")
+
+        if not preview["needs_update"]:
+            _set_update_status(
+                app,
+                project_id,
+                status="completed",
+                phase="done",
+                progress=100,
+                message="Уже установлена последняя версия.",
+                needs_update=False,
+                updated=False,
+                restarting=False,
+                changed_files=[],
+                append_log="Обновлений не найдено",
+            )
+            return
+
+        branch = preview["branch"]
+        before_sha = preview["current_sha"]
+        target_ref = f"origin/{branch}"
+
+        _set_update_status(
+            app,
+            project_id,
+            phase="pull",
+            progress=34,
+            message="Скачиваем изменения из GitHub...",
+            append_log="Загружаем изменения из GitHub",
+        )
+        pull_out, _ = await _run_command(
+            "git",
+            "pull",
+            "--ff-only",
+            "origin",
+            branch,
+            cwd=BASE_DIR,
+            timeout=300,
+        )
+
+        after_sha, _ = await _run_command("git", "rev-parse", "HEAD", cwd=BASE_DIR, timeout=60)
         diff_out, _ = await _run_command(
             "git",
             "diff",
             "--name-only",
-            before_out,
-            after_out,
-            cwd=project_path,
+            before_sha,
+            after_sha,
+            cwd=BASE_DIR,
             timeout=60,
         )
         changed_files = [line for line in diff_out.splitlines() if line.strip()]
 
         if "requirements.txt" in changed_files:
-            await _run_command(sys.executable, "-m", "pip", "install", "-r", "requirements.txt", cwd=project_path, timeout=900)
+            _set_update_status(
+                app,
+                project_id,
+                phase="python",
+                progress=56,
+                message="Обновляем Python-зависимости...",
+                append_log="Обновляем Python зависимости",
+            )
+            await _run_command(sys.executable, "-m", "pip", "install", "-r", "requirements.txt", cwd=BASE_DIR, timeout=900)
 
-        frontend_dir = project_path / "frontend"
+        frontend_dir = BASE_DIR / "frontend"
         need_npm_install = (
             not (frontend_dir / "node_modules").exists()
             or "frontend/package.json" in changed_files
             or "frontend/package-lock.json" in changed_files
         )
         if need_npm_install:
+            _set_update_status(
+                app,
+                project_id,
+                phase="node",
+                progress=70,
+                message="Обновляем frontend-зависимости...",
+                append_log="Обновляем npm зависимости",
+            )
             await _run_command("npm.cmd", "install", "--silent", cwd=frontend_dir, timeout=900)
 
+        _set_update_status(
+            app,
+            project_id,
+            phase="build",
+            progress=86,
+            message="Собираем новую версию интерфейса...",
+            append_log="Собираем frontend",
+        )
         await _run_command("npm.cmd", "run", "build", cwd=frontend_dir, timeout=900)
 
-    restarting = before_out != after_out and _schedule_app_restart()
-    return {
-        "updated": before_out != after_out,
-        "before_sha": before_out,
-        "after_sha": after_out,
-        "branch": branch,
-        "origin_url": origin_out,
-        "changed_files": changed_files,
-        "pull_output": pull_out,
-        "restarting": restarting,
-    }
+        preview_after = await _build_app_update_preview(BASE_DIR)
+        _set_update_status(
+            app,
+            project_id,
+            phase="restart",
+            progress=96,
+            message="Подготавливаем перезапуск приложения...",
+            changed_files=changed_files,
+            current_version=preview["current_version"],
+            target_version=preview_after["current_version"],
+            needs_update=False,
+            updated=True,
+            current_sha=before_sha,
+            target_sha=after_sha,
+            current_label=_format_version_label(preview["current_version"], before_sha),
+            target_label=_format_version_label(preview_after["current_version"], after_sha),
+            append_log="Готовим перезапуск сервисов",
+        )
 
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+        restarting = _schedule_app_restart()
+        _set_update_status(
+            app,
+            project_id,
+            status="completed",
+            phase="done",
+            progress=100,
+            message=(
+                "Обновление установлено. Приложение перезапускается..."
+                if restarting
+                else "Код обновлён, но автоперезапуск не сработал."
+            ),
+            current_version=preview["current_version"],
+            target_version=preview_after["current_version"],
+            needs_update=False,
+            restarting=restarting,
+            changed_files=changed_files,
+            pull_output=pull_out,
+            current_label=_format_version_label(preview["current_version"], before_sha),
+            target_label=_format_version_label(preview_after["current_version"], after_sha),
+            append_log="Обновление завершено",
+        )
+    except Exception as exc:
+        logger.exception("App update failed")
+        _set_update_status(
+            app,
+            project_id,
+            status="failed",
+            phase="failed",
+            error=str(exc),
+            message=f"Обновление остановлено: {exc}",
+            append_log=f"Ошибка: {exc}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -323,9 +558,7 @@ async def sync_repos(request: Request):
     return {"synced": len([r for r in results if r["status"] == "ok"]), "results": results}
 
 
-@router.post("/{project_id}/update-app")
-async def update_app(project_id: str, request: Request):
-    state = request.app.state.db
+def _get_app_project_or_404(state, project_id: str) -> dict:
     row = state.fetchone("SELECT id, name FROM projects WHERE id = ?", (project_id,))
     if not row:
         raise HTTPException(status_code=404, detail=f"Проект {project_id} не найден")
@@ -333,23 +566,98 @@ async def update_app(project_id: str, request: Request):
     project = dict(row)
     if project["name"] != APP_PROJECT_NAME:
         raise HTTPException(status_code=400, detail="Обновление доступно только для приложения nastyaorchestrator")
+    return project
+
+
+@router.get("/{project_id}/update-app")
+async def preview_app_update(project_id: str, request: Request):
+    state = request.app.state.db
+    _get_app_project_or_404(state, project_id)
 
     try:
-        result = await _update_local_app_repo(BASE_DIR)
+        preview = await _build_app_update_preview(BASE_DIR)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("App update failed")
-        raise HTTPException(status_code=500, detail=f"Не удалось обновить приложение: {exc}") from exc
+        logger.exception("App update preview failed")
+        raise HTTPException(status_code=500, detail=f"Не удалось подготовить обновление: {exc}") from exc
 
     return {
-        **result,
+        **preview,
         "project_path": str(BASE_DIR),
-        "message": (
-            "Приложение обновлено и перезапускается."
-            if result["restarting"]
-            else "Приложение уже на последней версии."
-            if not result["updated"]
-            else "Код обновлён, но автоперезапуск не сработал. Перезапусти приложение вручную."
-        ),
+        "active_status": _get_update_status(request.app, project_id),
     }
+
+
+@router.get("/{project_id}/update-app/status")
+async def app_update_status(project_id: str, request: Request):
+    state = request.app.state.db
+    _get_app_project_or_404(state, project_id)
+
+    current = _get_update_status(request.app, project_id)
+    if current:
+        return current
+
+    try:
+        preview = await _build_app_update_preview(BASE_DIR)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("App update status failed")
+        raise HTTPException(status_code=500, detail=f"Не удалось получить статус обновления: {exc}") from exc
+
+    return {
+        **preview,
+        "operation_id": None,
+        "status": "idle",
+        "phase": "idle",
+        "progress": 0,
+        "message": "Доступно обновление." if preview["needs_update"] else "Уже установлена последняя версия.",
+        "error": None,
+        "updated": False,
+        "restarting": False,
+        "changed_files": [],
+        "logs": [],
+        "started_at": None,
+        "project_path": str(BASE_DIR),
+        "updated_at": _now_iso(),
+    }
+
+
+@router.post("/{project_id}/update-app")
+async def start_app_update(project_id: str, request: Request):
+    state = request.app.state.db
+    _get_app_project_or_404(state, project_id)
+
+    current = _get_update_status(request.app, project_id)
+    if current and current.get("status") in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="Обновление уже выполняется")
+
+    try:
+        preview = await _build_app_update_preview(BASE_DIR)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("App update start failed")
+        raise HTTPException(status_code=500, detail=f"Не удалось запустить обновление: {exc}") from exc
+
+    operation_id = str(uuid.uuid4())
+    status = _set_update_status(
+        request.app,
+        project_id,
+        operation_id=operation_id,
+        status="queued",
+        phase="queued",
+        progress=2,
+        message="Готовим обновление...",
+        error=None,
+        updated=False,
+        restarting=False,
+        changed_files=[],
+        logs=[],
+        started_at=_now_iso(),
+        project_path=str(BASE_DIR),
+        **preview,
+    )
+    asyncio.create_task(_run_app_update_job(request.app, project_id, operation_id))
+    return status

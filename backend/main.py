@@ -148,6 +148,7 @@ async def lifespan(app: FastAPI):
 
     # SSE: список asyncio.Queue для подключённых клиентов
     app.state.event_queues: list[asyncio.Queue] = []
+    app.state.app_updates: dict[str, dict] = {}
 
     # Время старта для uptime
     app.state.start_time = datetime.now(timezone.utc)

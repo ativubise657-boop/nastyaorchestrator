@@ -145,7 +145,9 @@ interface AppStore {
   loadProjects: () => Promise<void>
   createProject: (data: CreateProjectData) => Promise<void>
   updateProject: (id: string, data: Partial<CreateProjectData>) => Promise<void>
-  updateApp: (id: string) => Promise<AppUpdateResult>
+  getAppUpdatePreview: (id: string) => Promise<AppUpdatePreview>
+  startAppUpdate: (id: string) => Promise<AppUpdateStatus>
+  getAppUpdateStatus: (id: string) => Promise<AppUpdateStatus>
   deleteProject: (id: string) => Promise<void>
   selectProject: (id: string) => void
 
@@ -242,16 +244,56 @@ export interface StatuslineData {
   ts: number
 }
 
-export interface AppUpdateResult {
-  updated: boolean
-  restarting: boolean
-  message: string
-  project_path: string
+export interface AppUpdateCommit {
+  sha: string
+  summary: string
+}
+
+export interface AppUpdatePreview {
+  current_version: string | null
+  target_version: string | null
+  current_sha: string
+  target_sha: string
+  current_label: string
+  target_label: string
   branch: string
   origin_url: string
-  before_sha: string
-  after_sha: string
+  needs_update: boolean
+  local_changes: boolean
+  blocked_reason: string | null
+  commit_count: number
+  commits: AppUpdateCommit[]
+  project_path: string
+  active_status?: AppUpdateStatus | null
+}
+
+export interface AppUpdateStatus {
+  operation_id: string | null
+  status: 'idle' | 'queued' | 'running' | 'completed' | 'failed'
+  phase: string
+  progress: number
+  message: string
+  error: string | null
+  updated: boolean
+  restarting: boolean
   changed_files: string[]
+  logs: string[]
+  started_at: string | null
+  updated_at: string
+  current_version: string | null
+  target_version: string | null
+  current_sha: string
+  target_sha: string
+  current_label: string
+  target_label: string
+  branch: string
+  origin_url: string
+  needs_update: boolean
+  local_changes: boolean
+  blocked_reason: string | null
+  commit_count: number
+  commits: AppUpdateCommit[]
+  project_path: string
 }
 
 // ===== Zustand Store =====
@@ -294,10 +336,18 @@ export const useStore = create<AppStore>((set, get) => ({
     }))
   },
 
-  updateApp: async (id) => {
-    return apiFetch<AppUpdateResult>(`/api/projects/${id}/update-app`, {
+  getAppUpdatePreview: async (id) => {
+    return apiFetch<AppUpdatePreview>(`/api/projects/${id}/update-app`)
+  },
+
+  startAppUpdate: async (id) => {
+    return apiFetch<AppUpdateStatus>(`/api/projects/${id}/update-app`, {
       method: 'POST',
     })
+  },
+
+  getAppUpdateStatus: async (id) => {
+    return apiFetch<AppUpdateStatus>(`/api/projects/${id}/update-app/status`)
   },
 
   deleteProject: async (id) => {
