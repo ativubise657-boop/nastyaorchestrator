@@ -35,7 +35,7 @@ CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "*").split(",")
 # Прочее
 # ---------------------------------------------------------------------------
 APP_TITLE: str = "Nastya Orchestrator"
-APP_VERSION: str = "0.1.1"
+APP_VERSION: str = "0.1.2"
 
 # Считаем worker «живым», если heartbeat был не позже чем N секунд назад
 WORKER_HEARTBEAT_TTL: int = int(os.getenv("WORKER_HEARTBEAT_TTL", "60"))

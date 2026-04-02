@@ -93,6 +93,40 @@
   color: var(--text-primary);
 }
 
+.app-update__release-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.app-update__release-card {
+  border: 1px solid rgba(155, 77, 202, 0.18);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(114, 46, 133, 0.12), rgba(255, 255, 255, 0.02));
+  padding: 12px 14px;
+}
+
+.app-update__release-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.app-update__release-items {
+  margin: 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.app-update__release-item {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
 .app-update__commit-list,
 .app-update__log-list {
   display: flex;

@@ -23,6 +23,7 @@ router = APIRouter()
 REPOS_DIR = Path.home() / "repos"
 APP_PROJECT_NAME = "nastyaorchestrator"
 APP_RESTART_SCRIPT = BASE_DIR / "tools" / "restart-app.bat"
+APP_CHANGELOG_FILE = "CHANGELOG.md"
 
 
 def _inject_pat(git_url: str) -> str:
@@ -119,6 +120,137 @@ def _extract_app_version(config_text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _normalize_version(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    if normalized.lower().startswith("v"):
+        normalized = normalized[1:]
+    return normalized or None
+
+
+def _extract_changelog_version(title: str) -> str | None:
+    match = re.search(r"\bv?(\d+\.\d+\.\d+)\b", title)
+    return match.group(1) if match else None
+
+
+def _parse_changelog_sections(changelog_text: str | None) -> list[dict]:
+    if not changelog_text:
+        return []
+
+    sections: list[dict] = []
+    current: dict | None = None
+    paragraph_lines: list[str] = []
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph_lines
+        if current is not None and paragraph_lines:
+            current["items"].append(" ".join(paragraph_lines).strip())
+            paragraph_lines = []
+
+    def flush_section() -> None:
+        nonlocal current
+        flush_paragraph()
+        if current is not None and current["items"]:
+            sections.append(current)
+        current = None
+
+    for raw_line in changelog_text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if line.startswith("## "):
+            flush_section()
+            title = line[3:].strip()
+            current = {
+                "title": title,
+                "version": _extract_changelog_version(title),
+                "items": [],
+            }
+            continue
+
+        if current is None:
+            continue
+
+        if stripped.startswith("- ") or stripped.startswith("* "):
+            flush_paragraph()
+            current["items"].append(stripped[2:].strip())
+            continue
+
+        if stripped and not stripped.startswith("#"):
+            paragraph_lines.append(stripped)
+            continue
+
+        flush_paragraph()
+
+    flush_section()
+    return sections
+
+
+def _read_local_text(project_path: Path, relative_path: str) -> str | None:
+    try:
+        return (project_path / relative_path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+
+
+async def _read_git_text(project_path: Path, git_ref: str, relative_path: str) -> str | None:
+    try:
+        text, _ = await _run_command(
+            "git",
+            "show",
+            f"{git_ref}:{relative_path}",
+            cwd=project_path,
+            timeout=60,
+        )
+        return text
+    except Exception:
+        return None
+
+
+def _select_release_notes(
+    changelog_text: str | None,
+    *,
+    current_version: str | None,
+    target_version: str | None,
+    needs_update: bool,
+) -> list[dict[str, object]]:
+    sections = _parse_changelog_sections(changelog_text)
+    if not sections:
+        return []
+
+    current_version = _normalize_version(current_version)
+    target_version = _normalize_version(target_version)
+
+    def find_section_index(version: str | None) -> int | None:
+        if not version:
+            return None
+        for index, section in enumerate(sections):
+            if section.get("version") == version:
+                return index
+        return None
+
+    if needs_update:
+        start_index = find_section_index(target_version) or 0
+        end_index = find_section_index(current_version)
+        if end_index is None or end_index <= start_index:
+            selected = sections[start_index:start_index + 1]
+        else:
+            selected = sections[start_index:end_index]
+    else:
+        current_index = find_section_index(current_version)
+        selected = sections[current_index:current_index + 1] if current_index is not None else sections[:1]
+
+    return [
+        {
+            "title": str(section["title"]),
+            "version": section.get("version"),
+            "items": list(section["items"]),
+        }
+        for section in selected
+    ]
+
+
 def _read_local_app_version(project_path: Path) -> str:
     try:
         config_text = (project_path / "backend" / "core" / "config.py").read_text(encoding="utf-8", errors="ignore")
@@ -182,21 +314,24 @@ async def _build_app_update_preview(project_path: Path) -> dict:
 
     current_version = _read_local_app_version(project_path)
     target_version = current_version
+    local_changelog = _read_local_text(project_path, APP_CHANGELOG_FILE)
     try:
-        remote_config, _ = await _run_command(
-            "git",
-            "show",
-            f"{target_ref}:backend/core/config.py",
-            cwd=project_path,
-            timeout=60,
-        )
-        target_version = _extract_app_version(remote_config) or APP_VERSION
+        remote_config = await _read_git_text(project_path, target_ref, "backend/core/config.py")
+        target_version = _extract_app_version(remote_config or "") or APP_VERSION
     except Exception:
         target_version = APP_VERSION
+    remote_changelog = await _read_git_text(project_path, target_ref, APP_CHANGELOG_FILE)
+    needs_update = current_sha != target_sha
+    release_notes = _select_release_notes(
+        remote_changelog if needs_update and remote_changelog else local_changelog,
+        current_version=current_version,
+        target_version=target_version,
+        needs_update=needs_update,
+    )
 
     commits: list[dict[str, str]] = []
     commit_count = 0
-    if current_sha != target_sha:
+    if needs_update:
         log_out, _ = await _run_command(
             "git",
             "log",
@@ -230,13 +365,14 @@ async def _build_app_update_preview(project_path: Path) -> dict:
         "target_label": _format_version_label(target_version, target_sha),
         "branch": branch,
         "origin_url": origin_out,
-        "needs_update": current_sha != target_sha,
+        "needs_update": needs_update,
         "local_changes": local_changes,
         "blocked_reason": (
             "Есть локальные изменения. Сначала закоммить их или убери перед обновлением."
             if local_changes
             else None
         ),
+        "release_notes": release_notes,
         "commit_count": commit_count,
         "commits": commits,
     }

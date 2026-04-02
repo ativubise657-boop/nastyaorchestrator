@@ -249,6 +249,12 @@ export interface AppUpdateCommit {
   summary: string
 }
 
+export interface AppUpdateReleaseNote {
+  title: string
+  version: string | null
+  items: string[]
+}
+
 export interface AppUpdatePreview {
   current_version: string | null
   target_version: string | null
@@ -261,6 +267,7 @@ export interface AppUpdatePreview {
   needs_update: boolean
   local_changes: boolean
   blocked_reason: string | null
+  release_notes: AppUpdateReleaseNote[]
   commit_count: number
   commits: AppUpdateCommit[]
   project_path: string
@@ -291,6 +298,7 @@ export interface AppUpdateStatus {
   needs_update: boolean
   local_changes: boolean
   blocked_reason: string | null
+  release_notes: AppUpdateReleaseNote[]
   commit_count: number
   commits: AppUpdateCommit[]
   project_path: string

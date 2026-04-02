@@ -3,6 +3,7 @@ import {
   useProjects,
   useStore,
   type AppUpdatePreview,
+  type AppUpdateReleaseNote,
   type AppUpdateStatus,
 } from '../stores'
 import './ProjectModal.css'
@@ -30,6 +31,13 @@ function formatCommitOverflow(preview: AppUpdatePreview | null) {
   const extra = preview.commit_count - preview.commits.length
   if (extra <= 0) return null
   return `И ещё ${extra} изменений`
+}
+
+function formatReleaseTitle(note: AppUpdateReleaseNote) {
+  if (note.version && note.title.trim() === `v${note.version}`) {
+    return `Версия v${note.version}`
+  }
+  return note.title
 }
 
 interface Props {
@@ -137,6 +145,7 @@ export function AppUpdateModal({ onClose }: Props) {
 
   const effectiveCurrentLabel = status?.current_label ?? preview?.current_label ?? '...'
   const effectiveTargetLabel = status?.target_label ?? preview?.target_label ?? '...'
+  const effectiveReleaseNotes = status?.release_notes ?? preview?.release_notes ?? []
   const effectiveCommits = status?.commits ?? preview?.commits ?? []
   const blockedReason = status?.blocked_reason ?? preview?.blocked_reason ?? null
   const hasLocalChanges = status?.local_changes ?? preview?.local_changes ?? false
@@ -209,7 +218,27 @@ export function AppUpdateModal({ onClose }: Props) {
                     <div className="app-update__section-title">
                       {needsUpdate ? 'Что изменится' : 'Текущая версия'}
                     </div>
-                    {effectiveCommits.length > 0 ? (
+                    {effectiveReleaseNotes.length > 0 ? (
+                      <div className="app-update__release-list">
+                        {effectiveReleaseNotes.map((note) => (
+                          <section
+                            key={`${note.version ?? 'release'}-${note.title}`}
+                            className="app-update__release-card"
+                          >
+                            <div className="app-update__release-title">
+                              {formatReleaseTitle(note)}
+                            </div>
+                            <ul className="app-update__release-items">
+                              {note.items.map((item) => (
+                                <li key={`${note.title}-${item}`} className="app-update__release-item">
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        ))}
+                      </div>
+                    ) : effectiveCommits.length > 0 ? (
                       <ul className="app-update__commit-list">
                         {effectiveCommits.map((commit) => (
                           <li key={`${commit.sha}-${commit.summary}`} className="app-update__commit-item">
@@ -221,11 +250,11 @@ export function AppUpdateModal({ onClose }: Props) {
                     ) : (
                       <div className="app-update__empty-note">
                         {needsUpdate
-                          ? 'GitHub пока не вернул список коммитов, но новая версия уже обнаружена.'
-                          : 'Новых коммитов для этой установки сейчас нет.'}
+                          ? 'Описание релиза пока не заполнено, но новая версия уже обнаружена.'
+                          : 'Для этой версии ещё не добавили отдельное описание релиза.'}
                       </div>
                     )}
-                    {formatCommitOverflow(preview) && (
+                    {!effectiveReleaseNotes.length && formatCommitOverflow(preview) && (
                       <div className="app-update__overflow">{formatCommitOverflow(preview)}</div>
                     )}
                   </div>
