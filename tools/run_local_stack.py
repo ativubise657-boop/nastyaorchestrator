@@ -17,6 +17,26 @@ ROOT = Path(__file__).resolve().parents[1]
 STREAM_ENCODING = locale.getpreferredencoding(False) or "utf-8"
 
 
+def sanitize_path_env(env: dict[str, str]) -> None:
+    path_value = env.get("PATH", "")
+    if os.name != "nt" or not path_value:
+        return
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw_part in path_value.split(";"):
+        part = raw_part.strip().strip('"')
+        if not part or part == "$($env:PATH)":
+            continue
+        key = part.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(part)
+
+    env["PATH"] = ";".join(cleaned)
+
+
 def configure_console() -> None:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -90,6 +110,7 @@ def main() -> int:
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    sanitize_path_env(env)
 
     backend: subprocess.Popen[str] | None = None
     worker: subprocess.Popen[str] | None = None

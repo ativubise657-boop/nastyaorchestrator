@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MODEL_REASONING_EFFORTS = {
+    "gpt-5.4": "high",
+    "gpt-5.3-codex": "xhigh",
+    "gpt-5.1-codex": "high",
+    "gpt-5.1-codex-max": "xhigh",
+    "gpt-5.1-codex-mini": "high",
+    "gpt-5-codex-mini": "high",
+}
 
 
 @dataclass(slots=True)
@@ -111,6 +119,9 @@ class CodexExecutor:
         model_id = get_model_id(model)
         if model_id:
             cmd.extend(["--model", model_id])
+            reasoning_effort = MODEL_REASONING_EFFORTS.get(model_id) or MODEL_REASONING_EFFORTS.get(model)
+            if reasoning_effort:
+                cmd.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
 
         for add_dir in add_dirs:
             cmd.extend(["--add-dir", self._normalize_path_for_cli(add_dir)])
@@ -305,6 +316,26 @@ class CodexExecutor:
             )
 
         return None
+
+    @staticmethod
+    def _humanize_error(error_msg: str, model: str) -> str:
+        lowered = error_msg.lower()
+
+        if "403 forbidden" in lowered and "codex/responses" in lowered:
+            return (
+                "Codex CLI видит локальный логин, но OpenAI отклонил выполнение этой сессии. "
+                "Обычно помогает заново выполнить `npx.cmd -y @openai/codex login` под нужным аккаунтом ChatGPT/OpenAI.\n\n"
+                f"Техническая деталь:\n{error_msg}"
+            )
+
+        if "unsupported_value" in lowered and "reasoning.effort" in lowered:
+            return (
+                f"Для CLI-модели `{model}` выбран слишком высокий уровень thinking. "
+                "Нужно либо понизить reasoning, либо использовать другую модель.\n\n"
+                f"Техническая деталь:\n{error_msg}"
+            )
+
+        return error_msg
 
     async def execute(
         self,
@@ -547,5 +578,6 @@ class CodexExecutor:
             return {"status": "completed", "result": full_result, "error": None}
 
         error_msg = read_error or stderr or f"Процесс завершился с кодом {returncode}"
+        error_msg = self._humanize_error(error_msg, model)
         logger.error("Codex CLI error: %s", error_msg)
         return {"status": "failed", "result": full_result, "error": error_msg}

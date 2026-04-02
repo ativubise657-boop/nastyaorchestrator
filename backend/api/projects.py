@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 import uuid
@@ -76,28 +77,45 @@ async def _run_command(*args: str, cwd: Path | None = None, timeout: int = 120) 
     env.setdefault("GCM_INTERACTIVE", "Never")
     env.setdefault("GIT_ASKPASS", "")
     env.setdefault("SSH_ASKPASS", "")
-    command = list(args)
-    git_ssh_command = env.get("APP_GIT_SSH_COMMAND") or env.get("GIT_SSH_COMMAND")
-    if command and Path(command[0]).name.lower() == "git" and git_ssh_command:
-        normalized_ssh_command = _normalize_windows_ssh_command(git_ssh_command)
-        command = [command[0], "-c", f"core.sshCommand={normalized_ssh_command}", *command[1:]]
-        env.pop("GIT_SSH_COMMAND", None)
-    else:
-        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    env["PATH"] = _sanitize_windows_path_env(env.get("PATH"))
 
-    proc = await asyncio.create_subprocess_exec(
-        *command,
-        cwd=str(cwd) if cwd else None,
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    stdout_text = stdout.decode(errors="replace").strip()
-    stderr_text = stderr.decode(errors="replace").strip()
-    if proc.returncode != 0:
-        raise RuntimeError(stderr_text or stdout_text or f"Command failed: {' '.join(args)}")
-    return stdout_text, stderr_text
+    command = list(args)
+    is_git_command = bool(command) and Path(command[0]).name.lower() in {"git", "git.exe"}
+    git_ssh_command = env.get("APP_GIT_SSH_COMMAND") or env.get("GIT_SSH_COMMAND")
+
+    if is_git_command:
+        if os.name == "nt" and git_ssh_command:
+            env["GIT_SSH"] = _ensure_windows_git_ssh_wrapper(git_ssh_command)
+            env["GIT_SSH_VARIANT"] = "ssh"
+            env.pop("GIT_SSH_COMMAND", None)
+        elif git_ssh_command:
+            env["GIT_SSH_COMMAND"] = git_ssh_command
+        else:
+            env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+
+    attempts = 2 if is_git_command else 1
+    last_error: RuntimeError | None = None
+
+    for attempt in range(1, attempts + 1):
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(cwd) if cwd else None,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout_text = stdout.decode(errors="replace").strip()
+        stderr_text = stderr.decode(errors="replace").strip()
+        if proc.returncode == 0:
+            return stdout_text, stderr_text
+
+        last_error = RuntimeError(stderr_text or stdout_text or f"Command failed: {' '.join(args)}")
+        if attempt < attempts:
+            logger.warning("Command failed on attempt %d/%d, retrying: %s", attempt, attempts, " ".join(args))
+            await asyncio.sleep(0.6)
+
+    raise last_error or RuntimeError(f"Command failed: {' '.join(args)}")
 
 
 def _schedule_app_restart() -> bool:
@@ -273,6 +291,66 @@ def _normalize_windows_ssh_command(command: str) -> str:
         return f"{prefix}{drive}:/"
 
     return re.sub(r'(^|[\s"])\/([a-zA-Z])\/', replace_drive, command)
+
+
+def _sanitize_windows_path_env(path_value: str | None) -> str:
+    if not path_value:
+        return ""
+    if os.name != "nt":
+        return path_value
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw_part in path_value.split(";"):
+        part = raw_part.strip().strip('"')
+        if not part or part == "$($env:PATH)":
+            continue
+        key = part.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(part)
+    return ";".join(cleaned)
+
+
+def _normalize_windows_ssh_arg(arg: str) -> str:
+    if os.name != "nt":
+        return arg
+    normalized = _normalize_windows_ssh_command(arg)
+    return normalized.strip('"')
+
+
+def _cmd_quote(arg: str) -> str:
+    return f'"{arg.replace("\"", "\"\"")}"'
+
+
+def _ensure_windows_git_ssh_wrapper(command: str) -> str:
+    if os.name != "nt":
+        return command
+
+    normalized_command = _normalize_windows_ssh_command(command)
+    parts = shlex.split(normalized_command, posix=True)
+    if not parts:
+        raise RuntimeError("APP_GIT_SSH_COMMAND is empty")
+
+    ssh_executable = _normalize_windows_ssh_arg(parts[0])
+    if ssh_executable == "ssh":
+        system_ssh = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
+        if system_ssh.exists():
+            ssh_executable = str(system_ssh)
+
+    ssh_args = [_normalize_windows_ssh_arg(part) for part in parts[1:]]
+
+    wrapper_dir = BASE_DIR / "data" / "runtime"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    wrapper_path = wrapper_dir / "git-ssh-wrapper.cmd"
+    wrapper_body = "@echo off\r\nsetlocal\r\n"
+    wrapper_body += f"{_cmd_quote(ssh_executable)}"
+    if ssh_args:
+        wrapper_body += " " + " ".join(_cmd_quote(arg) for arg in ssh_args)
+    wrapper_body += " %*\r\n"
+    wrapper_path.write_text(wrapper_body, encoding="utf-8")
+    return str(wrapper_path)
 
 
 def _format_update_check_error(exc: Exception) -> str:
