@@ -8,6 +8,7 @@ set "ROOT=%~dp0"
 set "PORT=8781"
 set "ENV_FILE=%ROOT%.env"
 set "VENV=%ROOT%.venv"
+set "VENV_PY=%VENV%\Scripts\python.exe"
 set "DATA=%ROOT%data"
 set "DIST=%ROOT%frontend\dist"
 set "STACK_RUNNER=%ROOT%tools\run_local_stack.py"
@@ -78,11 +79,38 @@ if not exist "%VENV%\Scripts\activate.bat" (
     )
 )
 
-call "%VENV%\Scripts\activate.bat"
+if not exist "%VENV_PY%" (
+    echo [SETUP] Virtual environment looks incomplete. Recreating...
+    rmdir /s /q "%VENV%" >nul 2>&1
+    python -m venv "%VENV%"
+    if errorlevel 1 (
+        echo [ERROR] Could not recreate virtual environment.
+        pause
+        exit /b 1
+    )
+)
 
-if not exist "%VENV%\installed.marker" (
+"%VENV_PY%" -c "import sys" >nul 2>&1
+if errorlevel 1 (
+    echo [SETUP] Virtual environment is not runnable. Recreating...
+    rmdir /s /q "%VENV%" >nul 2>&1
+    python -m venv "%VENV%"
+    if errorlevel 1 (
+        echo [ERROR] Could not recreate virtual environment.
+        pause
+        exit /b 1
+    )
+)
+
+set "NEED_PIP_INSTALL=0"
+if not exist "%VENV%\installed.marker" set "NEED_PIP_INSTALL=1"
+
+"%VENV_PY%" -c "import uvicorn" >nul 2>&1
+if errorlevel 1 set "NEED_PIP_INSTALL=1"
+
+if "%NEED_PIP_INSTALL%"=="1" (
     echo [SETUP] Installing Python dependencies...
-    pip install --quiet --disable-pip-version-check -r "%ROOT%requirements.txt"
+    "%VENV_PY%" -m pip install --quiet --disable-pip-version-check -r "%ROOT%requirements.txt"
     if errorlevel 1 (
         echo [ERROR] pip install failed.
         pause
@@ -102,7 +130,7 @@ if errorlevel 1 (
 
 if not exist "%ENV_FILE%" (
     echo [SETUP] Creating .env file...
-    for /f "delims=" %%t in ('python -c "import secrets; print(secrets.token_hex(32))"') do set "TOKEN=%%t"
+    for /f "delims=" %%t in ('"%VENV_PY%" -c "import secrets; print(secrets.token_hex(32))"') do set "TOKEN=%%t"
     (
         echo WORKER_TOKEN=!TOKEN!
         echo ORCH_SERVER_URL=http://127.0.0.1:%PORT%
@@ -128,5 +156,5 @@ echo.
 echo [START] Launching backend and worker in this window...
 echo [INFO] Press Ctrl+C to stop both processes.
 echo.
-python "%STACK_RUNNER%" --port %PORT%
+"%VENV_PY%" "%STACK_RUNNER%" --port %PORT%
 exit /b %errorlevel%
