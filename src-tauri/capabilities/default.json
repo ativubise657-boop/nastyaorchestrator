@@ -1,0 +1,30 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Дефолтные права для главного окна Nastya Orchestrator",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
+    "core:webview:allow-create-webview-window",
+    "core:app:allow-version",
+    "core:app:allow-name",
+
+    "shell:default",
+    "shell:allow-execute",
+
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install",
+
+    "process:default",
+    "process:allow-restart",
+    "process:allow-exit",
+
+    "dialog:default"
+  ]
+}

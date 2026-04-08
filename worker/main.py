@@ -46,6 +46,16 @@ async def main() -> None:
     _setup_logging()
     logger = logging.getLogger(__name__)
 
+    # Прокси: читаем настройки из той же БД что использует backend и
+    # применяем в os.environ ДО создания httpx-клиентов и subprocess.
+    try:
+        from backend.core.state import State
+        from backend.core import proxy as proxy_module
+        applied = proxy_module.apply_from_db(State())
+        logger.info("Proxy applied: %s", applied.to_safe_dict())
+    except Exception as exc:
+        logger.warning("Не удалось применить прокси на старте worker: %s", exc)
+
     config = WorkerConfig()
 
     # Санити-чек конфигурации

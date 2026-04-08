@@ -7,6 +7,8 @@ import { useStore, useSidebarOpen, useSelectedProjectId } from './stores'
 import { useSSE } from './hooks/useSSE'
 import './App.css'
 
+const GLOBAL_FILE_DROP_EVENT = 'nastyaorc:global-file-drop'
+
 // Пустое состояние — нет выбранного проекта
 function EmptyState() {
   return (
@@ -68,6 +70,44 @@ export default function App() {
       useStore.getState().setSidebarOpen(true)
     } else if (!selectedProjectId) {
       useStore.getState().setSidebarOpen(true)
+    }
+  }, [selectedProjectId])
+
+  useEffect(() => {
+    const handleDragOver = (event: DragEvent) => {
+      if (!event.dataTransfer) return
+      const hasFiles = Array.from(event.dataTransfer.types || []).includes('Files')
+      if (!hasFiles) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = selectedProjectId ? 'copy' : 'none'
+    }
+
+    const handleDrop = (event: DragEvent) => {
+      if (!event.dataTransfer || event.dataTransfer.files.length === 0) return
+
+      const target = event.target
+      if (
+        target instanceof Element &&
+        (target.closest('.doc-panel') || target.closest('.doc-viewer__dropzone'))
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      if (!selectedProjectId) return
+
+      const files = Array.from(event.dataTransfer.files)
+      if (files.length === 0) return
+
+      useStore.getState().setDocPanelOpen(true)
+      window.dispatchEvent(new CustomEvent(GLOBAL_FILE_DROP_EVENT, { detail: files }))
+    }
+
+    window.addEventListener('dragover', handleDragOver)
+    window.addEventListener('drop', handleDrop)
+    return () => {
+      window.removeEventListener('dragover', handleDragOver)
+      window.removeEventListener('drop', handleDrop)
     }
   }, [selectedProjectId])
 

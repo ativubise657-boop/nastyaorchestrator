@@ -1,0 +1,145 @@
+name: Release Windows Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 'Publish as draft release (only applies when tag is pushed)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows Release
+    runs-on: windows-latest
+
+    env:
+      PYTHON_VERSION: '3.12'
+      NODE_VERSION: '20'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build backend with PyInstaller
+        run: pyinstaller build/backend.spec --noconfirm --distpath build/dist --workpath build/work
+
+      - name: Build worker with PyInstaller
+        run: pyinstaller build/worker.spec --noconfirm --distpath build/dist --workpath build/work
+
+      - name: Prepare Tauri sidecar binaries directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
+
+      - name: Copy backend.exe as Tauri sidecar
+        shell: pwsh
+        run: Copy-Item -Path build/dist/nastya-backend.exe -Destination src-tauri/binaries/nastya-backend-x86_64-pc-windows-msvc.exe -Force
+
+      - name: Copy worker.exe as Tauri sidecar
+        shell: pwsh
+        run: Copy-Item -Path build/dist/nastya-worker.exe -Destination src-tauri/binaries/nastya-worker-x86_64-pc-windows-msvc.exe -Force
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # Сборку фронта делает Tauri через beforeBuildCommand в tauri.conf.json
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Build Tauri application (signed)
+        if: env.TAURI_PRIVATE_KEY != ''
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        run: cargo tauri build
+
+      - name: Build Tauri application (unsigned)
+        if: env.TAURI_PRIVATE_KEY == ''
+        run: cargo tauri build
+
+      - name: Collect release artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          Copy-Item -Path build/dist/nastya-backend.exe -Destination release-artifacts/ -Force
+          Copy-Item -Path build/dist/nastya-worker.exe -Destination release-artifacts/ -Force
+          Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination release-artifacts/ -Force
+          }
+
+      - name: Generate SHA256 checksums
+        shell: pwsh
+        working-directory: release-artifacts
+        run: |
+          Get-ChildItem -Filter *.exe | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
+            "$hash  $($_.Name)" | Out-File -Append -Encoding ascii SHA256SUMS.txt
+          }
+          Get-Content SHA256SUMS.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nastya-windows-release
+          path: release-artifacts/
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == 'true' }}
+          generate_release_notes: true
+          files: |
+            release-artifacts/*.exe
+            release-artifacts/SHA256SUMS.txt

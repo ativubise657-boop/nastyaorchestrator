@@ -3,10 +3,17 @@
 """
 import os
 import re
+import sys
 from pathlib import Path
 
 # Корень проекта (директория, где лежит backend/)
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+# При frozen-режиме (PyInstaller onefile) исходники распакованы во временный
+# _MEIPASS, но runtime-данные (data/, documents/, frontend/dist/, .env) должны
+# лежать рядом с .exe — поэтому BASE_DIR = директория исполняемого файла.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Загружаем .env если есть
 from dotenv import load_dotenv

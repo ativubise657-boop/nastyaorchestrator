@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Nastya Orchestrator — иконка приложения.
+       Концепция: оркестратор = три связанных узла + центральный хаб с буквой N. -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a2332"/>
+      <stop offset="100%" stop-color="#0d1420"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5eead4"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <radialGradient id="hubGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#5eead4" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#5eead4" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Скруглённый фон -->
+  <rect width="512" height="512" rx="96" ry="96" fill="url(#bg)"/>
+
+  <!-- Свечение под центральным хабом -->
+  <circle cx="256" cy="256" r="160" fill="url(#hubGlow)"/>
+
+  <!-- Линии оркестрации (от центра к трём узлам) -->
+  <g stroke="url(#accent)" stroke-width="6" stroke-linecap="round" opacity="0.85">
+    <line x1="256" y1="256" x2="128" y2="140"/>
+    <line x1="256" y1="256" x2="384" y2="140"/>
+    <line x1="256" y1="256" x2="256" y2="420"/>
+  </g>
+
+  <!-- Внешние узлы -->
+  <g fill="url(#accent)">
+    <circle cx="128" cy="140" r="28"/>
+    <circle cx="384" cy="140" r="28"/>
+    <circle cx="256" cy="420" r="28"/>
+  </g>
+
+  <!-- Центральный хаб -->
+  <circle cx="256" cy="256" r="92" fill="#0d1420" stroke="url(#accent)" stroke-width="8"/>
+
+  <!-- Буква N -->
+  <text x="256" y="256"
+        font-family="'Inter', 'SF Pro Display', system-ui, sans-serif"
+        font-size="120"
+        font-weight="800"
+        fill="url(#accent)"
+        text-anchor="middle"
+        dominant-baseline="central">N</text>
+</svg>

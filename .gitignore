@@ -21,6 +21,20 @@ data/
 # Env
 .env
 
+# Tauri / build artefacts
+src-tauri/target/
+src-tauri/binaries/*.exe
+src-tauri/gen/
+build/dist/
+build/work/
+build/backend/
+build/worker/
+.venv-build/
+/dist/
+
+# Локальные документы Насти (не должны попадать в git)
+herdocs/
+
 # Logs
 *.log
 /tmp/

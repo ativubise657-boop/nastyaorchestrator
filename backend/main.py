@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import APP_TITLE, APP_VERSION, BASE_DIR, CORS_ORIGINS, SERVE_STATIC
 from backend.core.state import State
 from backend.core.queue import TaskQueue
+from backend.core import proxy as proxy_module
 
 # Настраиваем логирование
 logging.basicConfig(
@@ -146,6 +147,15 @@ async def lifespan(app: FastAPI):
     app.state.db = State()
     app.state.queue = TaskQueue(app.state.db)
 
+    # Прокси: загружаем из БД (или дефолты) и применяем в os.environ.
+    # Это автоматически прокинется во все subprocess (git/pip/npm/codex)
+    # и в httpx-клиенты (trust_env=True по умолчанию).
+    try:
+        applied = proxy_module.apply_from_db(app.state.db)
+        logger.info("Proxy startup: %s", applied.to_safe_dict())
+    except Exception as exc:
+        logger.warning("Не удалось применить прокси на startup: %s", exc)
+
     # SSE: список asyncio.Queue для подключённых клиентов
     app.state.event_queues: list[asyncio.Queue] = []
     app.state.app_updates: dict[str, dict] = {}
@@ -205,6 +215,7 @@ from backend.api.documents import router as documents_router
 from backend.api.links import router as links_router
 from backend.api.webhooks import router as webhooks_router
 from backend.api.system import router_system, router_queue
+from backend.api.settings import router as settings_router
 
 app.include_router(chat_router,      prefix="/api/chat",       tags=["chat"])
 app.include_router(projects_router,  prefix="/api/projects",   tags=["projects"])
@@ -214,6 +225,7 @@ app.include_router(links_router,     prefix="/api/links",      tags=["links"])
 app.include_router(webhooks_router,  prefix="/api/webhooks",   tags=["webhooks"])
 app.include_router(router_system,    prefix="/api/system",     tags=["system"])
 app.include_router(router_queue,     prefix="/api/queue",      tags=["queue"])
+app.include_router(settings_router,  prefix="/api/settings",   tags=["settings"])
 
 # SSE монтируем отдельно (без prefix /api/system, чтобы путь был /api/events/stream)
 from backend.api.system import event_stream

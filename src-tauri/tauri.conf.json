@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nastya Orchestrator",
+  "version": "0.1.0",
+  "identifier": "com.nastyaorc.app",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../frontend run dev",
+    "beforeBuildCommand": "npm --prefix ../frontend run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Nastya Orchestrator",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": true,
+        "decorations": true,
+        "url": "http://127.0.0.1:8781"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "dangerousDisableAssetCspModification": false
+    },
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Nastya Orchestrator",
+    "category": "Productivity",
+    "shortDescription": "Nastya Orchestrator desktop",
+    "longDescription": "Локальный десктопный шелл для Nastya Orchestrator (FastAPI backend + worker как sidecar).",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/nastya-backend",
+      "binaries/nastya-worker"
+    ],
+    "resources": [],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "perMachine": false,
+        "languages": ["English", "Russian"],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/ativubise657-boop/nastyaorchestrator/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "TODO_REPLACE_WITH_REAL_TAURI_UPDATER_PUBKEY"
+    },
+    "shell": {
+      "open": false
+    }
+  }
+}

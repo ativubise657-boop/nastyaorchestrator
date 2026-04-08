@@ -1,0 +1,41 @@
+[package]
+name = "nastya-orchestrator"
+version = "0.1.0"
+description = "Nastya Orchestrator desktop shell"
+authors = ["nastyaorc"]
+edition = "2021"
+rust-version = "1.77"
+
+# Точка входа — обычное Tauri-приложение под Windows.
+[lib]
+name = "nastya_orchestrator_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri 2 core с фичами трея и автообновлений
+tauri = { version = "2", features = ["tray-icon"] }
+# Плагины Tauri 2
+tauri-plugin-shell = "2"        # sidecar (externalBin) + shell.execute
+tauri-plugin-updater = "2"      # автообновления через GitHub releases
+tauri-plugin-process = "2"      # process::exit / restart из фронта при необходимости
+tauri-plugin-dialog = "2"       # модалки об ошибках бэкенда
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
+
+[features]
+# по умолчанию никаких custom-protocol хаков, обычный prod билд
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

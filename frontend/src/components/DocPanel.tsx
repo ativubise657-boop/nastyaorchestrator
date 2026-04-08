@@ -16,6 +16,8 @@ import {
 import { renderMarkdown } from '../hooks/useChat'
 import './DocPanel.css'
 
+const GLOBAL_FILE_DROP_EVENT = 'nastyaorc:global-file-drop'
+
 // ===== Утилиты =====
 
 function formatSize(bytes: number): string {
@@ -613,6 +615,7 @@ export function DocPanel() {
   const moveDocument = useStore((s) => s.moveDocument)
   const createFolder = useStore((s) => s.createFolder)
   const toggleDocPanel = useStore((s) => s.toggleDocPanel)
+  const setDocPanelOpen = useStore((s) => s.setDocPanelOpen)
   const setDocViewMode = useStore((s) => s.setDocViewMode)
   const docRefsSelected = useStore((s) => s.docRefsSelected)
   const clearDocRefs = useStore((s) => s.clearDocRefs)
@@ -672,13 +675,29 @@ export function DocPanel() {
   let globalDocIndex = 0
 
   // При выборе файлов — показать модалку выбора папки
-  const handleFilesSelected = useCallback((files: FileList | null) => {
-    if (!files || files.length === 0) return
-    setPendingFiles(Array.from(files))
+  const handleFilesSelected = useCallback((files: FileList | File[] | null) => {
+    if (!files) return
+    const incoming = Array.isArray(files) ? files : Array.from(files)
+    if (incoming.length === 0) return
+    setPendingFiles(incoming)
     setShowFolderPicker(true)
     setPickerNewFolder(false)
     setPickerParentId(null)
   }, [])
+
+  useEffect(() => {
+    const handleGlobalDrop = (event: Event) => {
+      const files = (event as CustomEvent<File[]>).detail
+      if (!files || files.length === 0) return
+      setDocPanelOpen(true)
+      handleFilesSelected(files)
+    }
+
+    window.addEventListener(GLOBAL_FILE_DROP_EVENT, handleGlobalDrop as EventListener)
+    return () => {
+      window.removeEventListener(GLOBAL_FILE_DROP_EVENT, handleGlobalDrop as EventListener)
+    }
+  }, [handleFilesSelected, setDocPanelOpen])
 
   // Загрузить файлы в выбранную папку
   const handleUploadToFolder = useCallback(async (folderId: string | null) => {
@@ -795,6 +814,7 @@ export function DocPanel() {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     setDragOver(false)
     // Если есть файлы с компьютера — показать picker
     if (e.dataTransfer.files.length > 0) {

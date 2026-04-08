@@ -114,6 +114,11 @@ class State:
 
     CREATE INDEX IF NOT EXISTS idx_links_project ON links(project_id);
 
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS circuit_breaker (
         project_id  TEXT PRIMARY KEY,
         crash_count INTEGER DEFAULT 0,

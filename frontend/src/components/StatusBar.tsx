@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppVersion, useProjects, useQueueSize, useStore, useWorkerOnline, type AppUpdatePreview } from '../stores'
 import { AppUpdateModal } from './AppUpdateModal'
+import { SettingsModal } from './SettingsModal'
 import './StatusBar.css'
 
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000
@@ -76,6 +77,7 @@ export function StatusBar() {
   const getAppUpdatePreview = useStore((s) => s.getAppUpdatePreview)
   const [showIntegrations, setShowIntegrations] = useState(false)
   const [showUpdate, setShowUpdate] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [updateBadgeState, setUpdateBadgeState] = useState<UpdateBadgeState>('idle')
   const [latestPreview, setLatestPreview] = useState<AppUpdatePreview | null>(null)
   const latestPreviewRef = useRef<AppUpdatePreview | null>(null)
@@ -172,6 +174,15 @@ export function StatusBar() {
 
         <button
           className="statusbar__action"
+          onClick={() => setShowSettings(true)}
+          title="Настройки (прокси)"
+        >
+          <span className="statusbar__action-emoji" aria-hidden="true">⚙️</span>
+          <span>Настройки</span>
+        </button>
+
+        <button
+          className="statusbar__action"
           onClick={() => setShowIntegrations(true)}
           title="Интеграции и вебхуки"
         >
@@ -206,6 +217,9 @@ export function StatusBar() {
         : null}
       {showUpdate && modalRoot
         ? createPortal(<AppUpdateModal onClose={() => setShowUpdate(false)} initialPreview={latestPreview} />, modalRoot)
+        : null}
+      {showSettings && modalRoot
+        ? createPortal(<SettingsModal onClose={() => setShowSettings(false)} />, modalRoot)
         : null}
     </header>
   )
