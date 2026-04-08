@@ -81,10 +81,14 @@ fn restart_backend(app: &AppHandle) {
 /// Корректное завершение всех sidecar-ов перед выходом из приложения.
 fn shutdown_sidecars(app: &AppHandle) {
     let state = app.state::<SidecarState>();
-    if let Some(child) = state.backend.lock().unwrap().take() {
+    // Сначала забираем оба child'а из мьютексов в локальные переменные —
+    // так borrow checker не цепляется к временным от .lock().unwrap().take()
+    let backend_child = state.backend.lock().unwrap().take();
+    let worker_child = state.worker.lock().unwrap().take();
+    if let Some(child) = backend_child {
         let _ = child.kill();
     }
-    if let Some(child) = state.worker.lock().unwrap().take() {
+    if let Some(child) = worker_child {
         let _ = child.kill();
     }
 }
