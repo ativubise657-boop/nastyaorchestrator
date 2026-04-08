@@ -86,6 +86,12 @@ hiddenimports += collect_submodules("markitdown")
 # ресурсы пакетов, такие как magika models, pdfminer cmap-таблицы и т.п.)
 # ---------------------------------------------------------------------------
 datas = []
+# React-фронт — вшиваем внутрь .exe чтобы backend мог раздавать через SERVE_STATIC
+# внутри Tauri-окна (окно грузит http://127.0.0.1:8781/ напрямую).
+# Собранный фронт должен существовать до запуска pyinstaller (CI делает npm run build раньше).
+_frontend_dist = ROOT / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    datas += [(str(_frontend_dist), "frontend/dist")]
 datas += collect_data_files("markitdown")
 datas += collect_data_files("pdfminer")
 datas += collect_data_files("magika")  # модели для определения типа файла

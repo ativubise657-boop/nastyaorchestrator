@@ -25,10 +25,9 @@ if getattr(sys, "frozen", False):
     except OSError:
         pass
 
-    # 2. SERVE_STATIC если рядом лежит собранный фронт
-    dist_dir = exe_dir / "frontend" / "dist"
-    if dist_dir.is_dir() and "SERVE_STATIC" not in os.environ:
-        os.environ["SERVE_STATIC"] = "true"
+    # 2. SERVE_STATIC во frozen включаем безусловно — фронт вшит в _MEIPASS
+    # через datas в backend.spec. main.py найдёт его через __file__.parent.parent.
+    os.environ.setdefault("SERVE_STATIC", "true")
 
     # 3. Подгрузим .env если есть (config.py тоже это сделает, но раньше — лучше)
     env_file = exe_dir / ".env"

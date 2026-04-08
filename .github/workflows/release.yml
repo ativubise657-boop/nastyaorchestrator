@@ -31,6 +31,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Node + фронт идут ПЕРВЫМИ — backend.spec вшивает frontend/dist внутрь .exe,
+      # значит фронт должен быть собран ДО PyInstaller.
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
       - name: Setup Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
@@ -60,18 +77,6 @@ jobs:
         shell: pwsh
         run: Copy-Item -Path build/dist/nastya-worker.exe -Destination src-tauri/binaries/nastya-worker-x86_64-pc-windows-msvc.exe -Force
 
-      - name: Setup Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      # Сборку фронта делает Tauri через beforeBuildCommand в tauri.conf.json
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
