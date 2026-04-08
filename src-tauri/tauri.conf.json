@@ -57,7 +57,6 @@
       },
       "nsis": {
         "installMode": "currentUser",
-        "perMachine": false,
         "languages": ["English", "Russian"],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico"
