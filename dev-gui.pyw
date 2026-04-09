@@ -1305,13 +1305,38 @@ class DevGui:
         except Exception:
             return None
 
+    @staticmethod
+    def _short_version(full: str) -> str:
+        """'1.0.0' → '1', '2.3.1' → '2.3.1' (если не round — показываем полный)."""
+        m = re.match(r"^(\d+)\.0\.0$", full.strip())
+        return m.group(1) if m else full
+
+    @staticmethod
+    def _full_version(short: str) -> str:
+        """'1' → '1.0.0', '1.0.0' → '1.0.0' (для записи в Cargo/Tauri файлы).
+
+        Принимает пользовательский ввод в короткой (одна цифра) или полной (semver)
+        форме и нормализует к semver X.Y.Z — этого требуют Cargo/Tauri.
+        """
+        s = short.strip()
+        if re.match(r"^\d+$", s):
+            return f"{s}.0.0"
+        return s
+
     def _suggest_next_version(self, current: str) -> str:
-        """Bump patch: 0.1.5 → 0.1.6. Если parse failed — возвращает 0.0.1."""
+        """Bump major (одноциферные релизы): 0.X.Y → 1, N.0.0 → (N+1).
+
+        Возвращает КОРОТКУЮ форму для диалога. Полная форма восстанавливается
+        через _full_version() когда пишем в Cargo.toml/tauri.conf.json.
+        """
         m = re.match(r"^(\d+)\.(\d+)\.(\d+)$", current.strip())
         if not m:
-            return "0.0.1"
-        major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return f"{major}.{minor}.{patch + 1}"
+            return "1"
+        major = int(m.group(1))
+        # Переход с dev-нумерации (0.X.Y) на первый "настоящий" релиз v1
+        if major == 0:
+            return "1"
+        return str(major + 1)
 
     def _bump_versions_in_files(self, new_ver: str) -> list[str]:
         """Обновляет версию в 3 файлах. Возвращает список изменённых файлов."""
@@ -1363,19 +1388,25 @@ class DevGui:
         return changed
 
     def _python_action_release_full(self) -> None:
-        """Полный release workflow: bump → pytest → commit → tag → push → open Actions."""
+        """Полный release workflow: bump → pytest → commit → tag → push → open Actions.
+
+        Версии: пользователь вводит короткую форму ("1", "2", "3"), внутренне
+        конвертируется в semver ("1.0.0") для Cargo/Tauri файлов. Везде в логах,
+        коммитах, тегах — короткая ("v1", "v2").
+        """
         self.output_queue.put("[release] ═══ Полный релизный workflow ═══\n")
 
-        # 1. Определить текущую версию
-        current = self._get_current_tauri_version()
-        if not current:
+        # 1. Определить текущую версию (в semver из tauri.conf.json)
+        current_full = self._get_current_tauri_version()
+        if not current_full:
             self.output_queue.put(
                 "[release] ERROR: не могу прочитать версию из src-tauri/tauri.conf.json\n"
             )
             return
-        suggested = self._suggest_next_version(current)
+        current_short = self._short_version(current_full)
+        suggested_short = self._suggest_next_version(current_full)
         self.output_queue.put(
-            f"[release] текущая версия: {current} → предлагаемая: {suggested}\n"
+            f"[release] текущая версия: v{current_short} → предлагаемая: v{suggested_short}\n"
         )
 
         # 2. Диалог ввода новой версии — в main thread через self.root.after
@@ -1385,7 +1416,10 @@ class DevGui:
         def _ask():
             try:
                 dlg = ctk.CTkInputDialog(
-                    text=f"Текущая версия: {current}\nНовая версия (semver, без 'v'):",
+                    text=(
+                        f"Текущая версия: v{current_short}\n"
+                        f"Новая версия (просто цифра: 1, 2, 3 ...):"
+                    ),
                     title="🚀 Release — выбор версии",
                 )
                 # Предустановить предложенную версию через внутренний entry
@@ -1393,7 +1427,7 @@ class DevGui:
                     for child in dlg.winfo_children():
                         for sub in child.winfo_children():
                             if isinstance(sub, (ctk.CTkEntry, tk.Entry)):
-                                sub.insert(0, suggested)
+                                sub.insert(0, suggested_short)
                                 break
                 except Exception:
                     pass
@@ -1405,20 +1439,28 @@ class DevGui:
 
         self.root.after(0, _ask)
         ready.wait(timeout=300)  # макс 5 минут на ввод
-        new_ver = (new_ver_holder["value"] or "").strip()
+        raw_input = (new_ver_holder["value"] or "").strip().lstrip("v")
 
-        if not new_ver:
+        if not raw_input:
             self.output_queue.put("[release] отменено пользователем\n")
             return
 
-        # Валидация формата
-        if not re.match(r"^\d+\.\d+\.\d+$", new_ver):
+        # Валидация: принимаем короткую ("1") и полную ("1.0.0") формы
+        if not re.match(r"^(\d+|\d+\.\d+\.\d+)$", raw_input):
             self.output_queue.put(
-                f"[release] ERROR: версия '{new_ver}' не в формате X.Y.Z\n"
+                f"[release] ERROR: версия '{raw_input}' не в формате X или X.Y.Z\n"
+                f"  Примеры: 1, 2, 3 ... или 1.2.3\n"
             )
             return
 
-        self.output_queue.put(f"[release] выбрана версия v{new_ver}\n")
+        # Внутренняя полная форма для записи в Cargo/Tauri, короткая для UI
+        new_ver_full = self._full_version(raw_input)
+        new_ver_short = self._short_version(new_ver_full)
+
+        self.output_queue.put(
+            f"[release] выбрана версия v{new_ver_short} "
+            f"(semver в файлах: {new_ver_full})\n"
+        )
 
         # 3. Проверка токена ДО всех правок
         token = self._get_github_token()
@@ -1441,13 +1483,15 @@ class DevGui:
             return
         self.output_queue.put("[release] ✓ pytest passed\n")
 
-        # 5. Bump версии
-        self.output_queue.put(f"[release] ─── bump версии в {new_ver} ────\n")
-        changed_files = self._bump_versions_in_files(new_ver)
+        # 5. Bump версии — в файлах semver X.Y.Z
+        self.output_queue.put(
+            f"[release] ─── bump версии в v{new_ver_short} ({new_ver_full}) ────\n"
+        )
+        changed_files = self._bump_versions_in_files(new_ver_full)
         if not changed_files:
             self.output_queue.put(
                 f"[release] предупреждение: ни один файл не изменился "
-                f"(версия {new_ver} уже везде установлена?)\n"
+                f"(версия {new_ver_full} уже везде установлена?)\n"
             )
         else:
             for f in changed_files:
@@ -1462,7 +1506,7 @@ class DevGui:
 
         # 7. git commit (может быть 0 изменений если Дима уже всё закоммитил)
         self.output_queue.put("[release] ─── git commit ─────────────────\n")
-        commit_msg = f"release: v{new_ver}"
+        commit_msg = f"release: v{new_ver_short}"
         rc, out = self._release_run(["git", "commit", "-m", commit_msg])
         if rc != 0 and "nothing to commit" not in out:
             self.output_queue.put("[release] ✗ git commit failed — stop\n")
@@ -1470,9 +1514,9 @@ class DevGui:
         if "nothing to commit" in out:
             self.output_queue.put("[release] ничего коммитить — уже чисто\n")
 
-        # 8. git tag
-        self.output_queue.put(f"[release] ─── git tag v{new_ver} ────────\n")
-        tag_name = f"v{new_ver}"
+        # 8. git tag — имя тега = короткая форма ("v1", "v2")
+        tag_name = f"v{new_ver_short}"
+        self.output_queue.put(f"[release] ─── git tag {tag_name} ────────\n")
         rc, out = self._release_run(["git", "tag", tag_name])
         if rc != 0 and "already exists" not in out:
             self.output_queue.put(
@@ -1501,7 +1545,7 @@ class DevGui:
 
         # 10. Открыть Actions в браузере
         self.output_queue.put(
-            f"[release] ✓ v{new_ver} запушен — CI стартует\n"
+            f"[release] ✓ v{new_ver_short} запушен — CI стартует\n"
             f"[release] открываю GitHub Actions...\n"
         )
         try:

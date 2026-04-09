@@ -4,8 +4,10 @@ import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './components/ChatPanel'
 import { DocPanel } from './components/DocPanel'
 import { RemoteConfigToast } from './components/RemoteConfigToast'
+import { TauriUpdateModal } from './components/TauriUpdateModal'
 import { useStore, useSidebarOpen, useSelectedProjectId } from './stores'
 import { useSSE } from './hooks/useSSE'
+import { useTauriUpdater } from './hooks/useTauriUpdater'
 import './App.css'
 
 const GLOBAL_FILE_DROP_EVENT = 'nastyaorc:global-file-drop'
@@ -31,6 +33,10 @@ export default function App() {
 
   // Подключаем SSE
   useSSE()
+
+  // Tauri Updater — автоматически чекает обновления при старте и раз в час.
+  // Работает только внутри собранного Tauri-окна (в vite dev молча пропускает).
+  const updater = useTauriUpdater()
 
   // Загружаем проекты + remote config при старте
   useEffect(() => {
@@ -127,6 +133,11 @@ export default function App() {
     <div className="app">
       <StatusBar />
       <RemoteConfigToast />
+      <TauriUpdateModal
+        state={updater}
+        onInstall={updater.install}
+        onDismiss={updater.dismiss}
+      />
 
       <div className="app__body">
         <Sidebar />

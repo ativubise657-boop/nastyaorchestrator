@@ -168,7 +168,16 @@ export function StatusBar() {
               </span>
             )}
           </span>
-          {appVersion && <span className="statusbar__version">v{appVersion}</span>}
+          {appVersion && (
+            <span className="statusbar__version">
+              v{(() => {
+                // Короткая форма для мажор-релизов: "1.0.0" → "1", "2.0.0" → "2"
+                // Если не round major — показываем полный semver
+                const m = appVersion.match(/^(\d+)\.0\.0$/)
+                return m ? m[1] : appVersion
+              })()}
+            </span>
+          )}
         </div>
       </div>
 
