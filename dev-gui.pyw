@@ -1354,7 +1354,7 @@ class DevGui:
                 flags=re.MULTILINE,
             )
             if new_text != text:
-                cargo.write_text(new_text, encoding="utf-8")
+                cargo.write_text(new_text, encoding="utf-8", newline="\n")
                 changed.append("src-tauri/Cargo.toml")
 
         # 2. src-tauri/tauri.conf.json — "version": "X.Y.Z"
@@ -1368,7 +1368,7 @@ class DevGui:
                 count=1,
             )
             if new_text != text:
-                tauri_conf.write_text(new_text, encoding="utf-8")
+                tauri_conf.write_text(new_text, encoding="utf-8", newline="\n")
                 changed.append("src-tauri/tauri.conf.json")
 
         # 3. backend/core/config.py — APP_VERSION: str = "X.Y.Z"
@@ -1382,7 +1382,7 @@ class DevGui:
                 count=1,
             )
             if new_text != text:
-                cfg_py.write_text(new_text, encoding="utf-8")
+                cfg_py.write_text(new_text, encoding="utf-8", newline="\n")
                 changed.append("backend/core/config.py")
 
         return changed

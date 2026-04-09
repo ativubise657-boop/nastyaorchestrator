@@ -86,6 +86,23 @@ jobs:
         shell: pwsh
         run: Copy-Item -Path build/dist/nastya-worker.exe -Destination src-tauri/binaries/nastya-worker-x86_64-pc-windows-msvc.exe -Force
 
+      - name: Download opera-proxy sidecar
+        # opera-proxy — третий sidecar (VPN tunnel), готовый бинарник из Alexey71/opera-proxy.
+        # В .gitignore → в репо его нет → качаем свежий релиз под Windows x86_64.
+        # Имя должно совпадать с externalBin в tauri.conf.json + platform suffix.
+        shell: pwsh
+        run: |
+          $url = "https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.windows-amd64.exe"
+          $dest = "src-tauri/binaries/opera-proxy-x86_64-pc-windows-msvc.exe"
+          Write-Host "Downloading opera-proxy from $url"
+          Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+          $size = (Get-Item $dest).Length
+          Write-Host "Downloaded $size bytes to $dest"
+          if ($size -lt 100000) {
+            Write-Error "opera-proxy binary suspiciously small ($size bytes) — download failed?"
+            exit 1
+          }
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
