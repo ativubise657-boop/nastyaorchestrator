@@ -463,7 +463,7 @@ async def _build_app_update_preview(project_path: Path) -> dict:
     current_sha, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
 
     try:
-        await _run_command("git", "fetch", "origin", branch, cwd=project_path, timeout=300)
+        await _run_command("git", "fetch", "origin", branch, cwd=project_path, timeout=60)
     except Exception as exc:
         logger.warning("App update preview fallback: git fetch failed: %s", exc)
         return await _build_app_update_fallback_preview(project_path, _format_update_check_error(exc))
@@ -606,7 +606,7 @@ async def _run_app_update_job(app, project_id: str, operation_id: str) -> None:
             "origin",
             branch,
             cwd=BASE_DIR,
-            timeout=300,
+            timeout=60,
         )
 
         after_sha, _ = await _run_command("git", "rev-parse", "HEAD", cwd=BASE_DIR, timeout=60)

@@ -1,13 +1,25 @@
 """Worker configuration loaded from environment variables."""
 
 import os
+import sys
+
+
+# Когда worker запущен как frozen sidecar внутри Tauri — он всегда ходит на
+# локальный backend, поднятый соседним sidecar-ом на 127.0.0.1:8781.
+# При dev-запуске (python -m worker.main) остаётся прод-дефолт.
+_DEFAULT_SERVER_URL = (
+    "http://127.0.0.1:8781" if getattr(sys, "frozen", False) else "https://nr.gnld.ru"
+)
+# Общий дефолт-токен для backend и worker во frozen-режиме (Tauri sidecar).
+# Backend использует тот же дефолт через backend/core/config.py.
+_DEFAULT_TOKEN = "nastya-local-dev" if getattr(sys, "frozen", False) else "change-me"
 
 
 class WorkerConfig:
     """All worker settings with sane defaults."""
 
-    server_url: str = os.getenv("ORCH_SERVER_URL", "https://nr.gnld.ru")
-    worker_token: str = os.getenv("WORKER_TOKEN", "change-me")
+    server_url: str = os.getenv("ORCH_SERVER_URL", _DEFAULT_SERVER_URL)
+    worker_token: str = os.getenv("WORKER_TOKEN", _DEFAULT_TOKEN)
     codex_binary: str = os.getenv("CODEX_BINARY", os.getenv("CLAUDE_BINARY", "codex"))
     aitunnel_api_key: str = os.getenv("AITUNNEL_API_KEY", "")
     aitunnel_base_url: str = os.getenv("AITUNNEL_BASE_URL", "https://api.aitunnel.ru/v1")

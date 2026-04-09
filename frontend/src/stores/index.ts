@@ -22,6 +22,10 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type ChatModel = 'glm-4.7-flash' | 'glm-5-turbo' | 'gpt-5.4-nano' | 'gpt-5.4' | 'gpt-5.3-codex'
 
+// Дефолт модели — gpt-5.4 (codex CLI через opera-proxy → OpenAI).
+// Был glm-5-turbo (aitunnel) — переключили потому что Дима хочет codex.
+const DEFAULT_CHAT_MODEL: ChatModel = 'gpt-5.4'
+
 const LEGACY_MODEL_ALIASES: Record<string, ChatModel> = {
   glm: 'glm-5-turbo',
   haiku: 'glm-4.7-flash',
@@ -31,15 +35,15 @@ const LEGACY_MODEL_ALIASES: Record<string, ChatModel> = {
   nano: 'gpt-5.4-nano',
   gpt5: 'gpt-5.4',
   'gpt5-thinking': 'gpt-5.3-codex',
-  default: 'glm-5-turbo',
-  max: 'glm-5-turbo',
+  default: DEFAULT_CHAT_MODEL,
+  max: DEFAULT_CHAT_MODEL,
   'gpt-5.4-mini': 'glm-4.7-flash',
   'gpt-5.4': 'gpt-5.4',
   'gpt-5.3-codex': 'gpt-5.3-codex',
 }
 
 function normalizeChatModel(model?: string | null): ChatModel {
-  if (!model) return 'glm-5-turbo'
+  if (!model) return DEFAULT_CHAT_MODEL
   if (
     model === 'glm-4.7-flash' ||
     model === 'glm-5-turbo' ||
@@ -49,7 +53,7 @@ function normalizeChatModel(model?: string | null): ChatModel {
   ) {
     return model
   }
-  return LEGACY_MODEL_ALIASES[model] ?? 'glm-5-turbo'
+  return LEGACY_MODEL_ALIASES[model] ?? DEFAULT_CHAT_MODEL
 }
 
 export interface ChatMessage {
@@ -199,6 +203,17 @@ interface AppStore {
   setWorkerStatus: (online: boolean, queueSize?: number) => void
   setTaskPhase: (phase: string | null) => void
   setAppVersion: (version: string | null) => void
+
+  // Remote config (GitHub remote-config.json)
+  remoteConfig: Record<string, any>
+  remoteConfigNotification: {
+    visible: boolean
+    message: string
+    version: number | string | null
+  }
+  loadRemoteConfig: () => Promise<void>
+  applyRemoteConfig: (cfg: Record<string, any>) => void
+  dismissRemoteConfigNotification: () => void
 
   // Модель
   selectedModel: ChatModel
@@ -723,6 +738,42 @@ export const useStore = create<AppStore>((set, get) => ({
 
   setTaskPhase: (phase) => set({ taskPhase: phase }),
   setAppVersion: (version) => set({ appVersion: version }),
+
+  // --- Remote config ---
+  remoteConfig: {},
+  remoteConfigNotification: { visible: false, message: '', version: null },
+
+  loadRemoteConfig: async () => {
+    try {
+      const cfg = await apiFetch<Record<string, any>>('/api/system/remote-config')
+      set({ remoteConfig: cfg || {} })
+    } catch {
+      // игнорируем — endpoint может не существовать в старых билдах
+    }
+  },
+
+  applyRemoteConfig: (cfg) => {
+    const old = get().remoteConfig
+    const oldVersion = old?.version ?? null
+    const newVersion = cfg?.version ?? null
+    set({ remoteConfig: cfg || {} })
+    // Показать всплывашку если версия изменилась
+    if (newVersion !== null && newVersion !== oldVersion) {
+      set({
+        remoteConfigNotification: {
+          visible: true,
+          message: cfg?.notification_message
+            || `Обновление оркестратора применено (v${newVersion})`,
+          version: newVersion,
+        },
+      })
+    }
+  },
+
+  dismissRemoteConfigNotification: () =>
+    set({
+      remoteConfigNotification: { visible: false, message: '', version: null },
+    }),
 
   // --- Модель ---
   selectedModel: normalizeChatModel(localStorage.getItem('selectedModel')),

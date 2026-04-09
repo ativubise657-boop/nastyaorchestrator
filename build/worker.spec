@@ -54,6 +54,14 @@ datas += collect_data_files("pptx")
 datas += collect_data_files("openpyxl")
 datas += collect_data_files("certifi")  # ca-bundle для httpx
 
+# Локальный wrapper codex-npx.cmd — обходит баг WindowsApps codex.exe
+# (системный codex из WindowsApps недоступен из subprocess на некоторых системах).
+# Wrapper вызывает `npx @openai/codex` напрямую.
+# Встраиваем в onefile, worker при frozen резолвит через sys._MEIPASS.
+_codex_wrapper = ROOT / "tools" / "codex-npx.cmd"
+if _codex_wrapper.is_file():
+    datas += [(str(_codex_wrapper), "tools")]
+
 a = Analysis(
     [str(ROOT / "worker" / "main.py")],
     pathex=[str(ROOT)],

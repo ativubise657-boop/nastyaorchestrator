@@ -186,6 +186,42 @@ def _load_statusline_from_sessions() -> dict:
         return _sl_sessions_cache or {}
 
 
+@router_system.get("/remote-config")
+async def remote_config(request: Request):
+    """
+    Возвращает remote-config загруженный при startup с GitHub.
+    Frontend дёргает этот endpoint при старте чтобы применить настройки
+    (header_emoji, default_model, feature flags).
+
+    Пусто при ошибке сети (opera-proxy не готов, GitHub down) — UI показывает дефолт.
+    """
+    return getattr(request.app.state, "remote_config", {}) or {}
+
+
+@router_system.post("/remote-config/refresh")
+async def remote_config_refresh(request: Request):
+    """
+    Форс-обновление remote config без рестарта приложения.
+    Используется dev-gui или UI-кнопкой "Проверить обновление".
+    """
+    from backend.core.remote_config import fetch_remote_config as _fetch
+
+    try:
+        new_cfg = _fetch()
+        old_cfg = getattr(request.app.state, "remote_config", {}) or {}
+        request.app.state.remote_config = new_cfg
+        changed = old_cfg != new_cfg
+        if changed:
+            # SSE событие для UI чтобы сразу показал всплывашку
+            await request.app.state.publish_event(
+                "remote_config_updated",
+                {"config": new_cfg, "changed": True},
+            )
+        return {"ok": True, "changed": changed, "config": new_cfg}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @router_system.get("/statusline")
 async def statusline():
     """Метрики из Codex CLI statusline (rate limits, RAM, model)."""

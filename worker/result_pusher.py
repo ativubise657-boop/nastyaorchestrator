@@ -19,10 +19,19 @@ _HTTP_TIMEOUT = 30
 class ResultPusher:
     """Клиент для отправки данных на сервер оркестратора."""
 
-    def __init__(self, server_url: str, token: str, worker_id: str = "worker"):
+    def __init__(
+        self,
+        server_url: str,
+        token: str,
+        worker_id: str = "worker",
+        http_client: httpx.AsyncClient | None = None,
+    ):
         self.server_url = server_url.rstrip("/")
         self.token = token
         self.worker_id = worker_id
+        # Опциональный shared httpx-клиент — для connection pooling.
+        # Если None — каждый метод создаёт свой (backward compat, fallback).
+        self._http = http_client
         self.headers = {
             "Authorization": f"Bearer {token}",
             "X-Worker-ID": worker_id,
@@ -90,25 +99,32 @@ class ResultPusher:
     ) -> str | None:
         """Найти папку по имени или создать новую. Возвращает folder_id."""
         url = f"{self.server_url}/api/documents/{project_id}/folders"
-        try:
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                # Ищем существующую папку
-                response = await client.get(url, headers=self.headers)
-                if response.status_code == 200:
-                    folders = response.json()
-                    for f in folders:
-                        if f.get("name", "").lower() == folder_name.lower():
-                            return f["id"]
 
-                # Не нашли — создаём
-                response = await client.post(
-                    url,
-                    headers={**self.headers, "Content-Type": "application/json"},
-                    json={"name": folder_name},
-                )
-                if response.status_code == 201:
-                    return response.json().get("id")
-                logger.warning("[find_or_create_folder] Сервер ответил %d", response.status_code)
+        async def _do(client: httpx.AsyncClient) -> str | None:
+            # Ищем существующую папку
+            response = await client.get(url, headers=self.headers)
+            if response.status_code == 200:
+                folders = response.json()
+                for f in folders:
+                    if f.get("name", "").lower() == folder_name.lower():
+                        return f["id"]
+
+            # Не нашли — создаём
+            response = await client.post(
+                url,
+                headers={**self.headers, "Content-Type": "application/json"},
+                json={"name": folder_name},
+            )
+            if response.status_code == 201:
+                return response.json().get("id")
+            logger.warning("[find_or_create_folder] Сервер ответил %d", response.status_code)
+            return None
+
+        try:
+            if self._http is not None:
+                return await _do(self._http)
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                return await _do(client)
         except Exception as e:
             logger.error("[find_or_create_folder] Ошибка: %s", e)
         return None
@@ -148,13 +164,19 @@ class ResultPusher:
             payload["task_id"] = task_id
 
         url = f"{self.server_url}/api/queue/heartbeat"
+
+        async def _do(client: httpx.AsyncClient) -> dict | None:
+            response = await client.post(url, headers=self.headers, json=payload)
+            if response.status_code >= 400:
+                logger.warning("[heartbeat] Сервер ответил %d: %s", response.status_code, response.text[:200])
+                return None
+            return response.json()
+
         try:
+            if self._http is not None:
+                return await _do(self._http)
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                response = await client.post(url, headers=self.headers, json=payload)
-                if response.status_code >= 400:
-                    logger.warning("[heartbeat] Сервер ответил %d: %s", response.status_code, response.text[:200])
-                    return None
-                return response.json()
+                return await _do(client)
         except httpx.TimeoutException:
             logger.warning("[heartbeat] Таймаут запроса к %s", url)
             return None
@@ -173,16 +195,22 @@ class ResultPusher:
     ) -> bool:
         """Выполнить POST-запрос. Возвращает True при успехе."""
         url = f"{self.server_url}{path}"
+
+        async def _do(client: httpx.AsyncClient) -> bool:
+            response = await client.post(url, headers=self.headers, json=payload)
+            if response.status_code >= 400:
+                logger.warning(
+                    "[%s] Сервер ответил %d: %s",
+                    log_tag, response.status_code, response.text[:200],
+                )
+                return False
+            return True
+
         try:
+            if self._http is not None:
+                return await _do(self._http)
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                response = await client.post(url, headers=self.headers, json=payload)
-                if response.status_code >= 400:
-                    logger.warning(
-                        "[%s] Сервер ответил %d: %s",
-                        log_tag, response.status_code, response.text[:200],
-                    )
-                    return False
-                return True
+                return await _do(client)
         except httpx.TimeoutException:
             logger.warning("[%s] Таймаут запроса к %s", log_tag, url)
             return False

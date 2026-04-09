@@ -21,11 +21,19 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Дефолтные креды (Дима выдал — у Насти на Win10 нужны для всех исходящих).
-DEFAULT_PROXY_HOST = "94.103.191.13"
-DEFAULT_PROXY_PORT = 3528
-DEFAULT_PROXY_USER = "user393678"
-DEFAULT_PROXY_PASS = "a6g7ln"
+# Дефолтные креды.
+#
+# В Tauri-режиме рядом с backend/worker всегда запущен opera-proxy sidecar
+# на 127.0.0.1:18080, который прозрачно туннелирует через корп-прокси в Opera
+# VPN → EU IP → мимо Cloudflare geoblock. Поэтому backend и worker идут
+# ВСЕГДА через локальный opera-proxy, а не прямо через корп-прокси.
+#
+# opera-proxy сам использует корп-прокси `94.103.191.13:3528` как outbound —
+# это настроено в src-tauri/src/lib.rs при спавне sidecar.
+DEFAULT_PROXY_HOST = "127.0.0.1"
+DEFAULT_PROXY_PORT = 18080
+DEFAULT_PROXY_USER = ""
+DEFAULT_PROXY_PASS = ""
 DEFAULT_NO_PROXY = "localhost,127.0.0.1,::1"
 DEFAULT_PROXY_ENABLED = True
 

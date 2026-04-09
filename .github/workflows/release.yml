@@ -26,6 +26,10 @@ jobs:
     env:
       PYTHON_VERSION: '3.12'
       NODE_VERSION: '20'
+      # Подтягиваем secrets в job-level env, чтобы `if:` шагов мог их проверить.
+      # Без этого условие `env.TAURI_SIGNING_PRIVATE_KEY != ''` всегда было бы пустым.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -58,6 +62,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Run pytest smoke suite
+        # Gate перед билдом — если тесты красные, релиз не публикуется.
+        # Тот же набор что в dev-gui Release workflow.
+        run: python -m pytest -q --tb=line
 
       - name: Build backend with PyInstaller
         run: pyinstaller build/backend.spec --noconfirm --distpath build/dist --workpath build/work
@@ -101,15 +110,10 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
-      - name: Build Tauri application (signed)
-        if: env.TAURI_PRIVATE_KEY != ''
-        env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-        run: cargo tauri build
-
-      - name: Build Tauri application (unsigned)
-        if: env.TAURI_PRIVATE_KEY == ''
+      - name: Build Tauri application
+        # TAURI_SIGNING_PRIVATE_KEY + PASSWORD уже в job-level env.
+        # Если secrets заданы — cargo tauri build подпишет артефакты и сгенерирует .nsis.zip.sig.
+        # Если secrets пустые — билд пройдёт без подписи (но Tauri Updater тогда не будет работать).
         run: cargo tauri build
 
       - name: Collect release artifacts
@@ -118,9 +122,52 @@ jobs:
           New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
           Copy-Item -Path build/dist/nastya-backend.exe -Destination release-artifacts/ -Force
           Copy-Item -Path build/dist/nastya-worker.exe -Destination release-artifacts/ -Force
-          Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object {
+          # Забираем ВСЁ из bundle/nsis: installer (.exe), updater дельта (.nsis.zip),
+          # подпись для updater (.nsis.zip.sig). Tauri Updater ищет всё это в release.
+          Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Include *.exe,*.nsis.zip,*.nsis.zip.sig -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
             Copy-Item -Path $_.FullName -Destination release-artifacts/ -Force
           }
+
+      - name: Generate latest.json for Tauri Updater
+        # tauri.conf.json.updater.endpoints указывает на
+        # https://github.com/.../releases/latest/download/latest.json
+        # Этот файл — манифест для updater: версия, ссылки, подпись.
+        # Без него приложение Насти получит 404 при проверке апдейтов.
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $notes = "Release $tag"
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+          # Находим .nsis.zip и .sig файлы
+          $zipFile = Get-ChildItem -Path release-artifacts -Filter *.nsis.zip | Select-Object -First 1
+          $sigFile = Get-ChildItem -Path release-artifacts -Filter *.nsis.zip.sig | Select-Object -First 1
+
+          if (-not $zipFile -or -not $sigFile) {
+            Write-Warning "nsis.zip or .sig not found — updater latest.json will be skipped (билд без TAURI_SIGNING_PRIVATE_KEY?)"
+            exit 0
+          }
+
+          $signature = Get-Content -Path $sigFile.FullName -Raw
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($zipFile.Name)"
+
+          $manifest = @{
+            version = $version
+            notes = $notes
+            pub_date = $pubDate
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $signature
+                url = $downloadUrl
+              }
+            }
+          }
+
+          $manifest | ConvertTo-Json -Depth 10 | Out-File -Encoding utf8 release-artifacts/latest.json
+          Write-Host "Generated latest.json:"
+          Get-Content release-artifacts/latest.json
 
       - name: Generate SHA256 checksums
         shell: pwsh
@@ -147,4 +194,7 @@ jobs:
           generate_release_notes: true
           files: |
             release-artifacts/*.exe
+            release-artifacts/*.nsis.zip
+            release-artifacts/*.nsis.zip.sig
+            release-artifacts/latest.json
             release-artifacts/SHA256SUMS.txt

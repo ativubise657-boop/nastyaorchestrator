@@ -27,7 +27,11 @@ DB_PATH: str = os.getenv("DB_PATH", str(BASE_DIR / "data" / "nastya.db"))
 # ---------------------------------------------------------------------------
 # Авторизация worker-а
 # ---------------------------------------------------------------------------
-WORKER_TOKEN: str = os.getenv("WORKER_TOKEN", "change-me")
+# Во frozen-режиме (Tauri sidecar) backend и worker используют один общий
+# дефолт-токен. Worker тоже использует его через worker/config.py _DEFAULT_TOKEN.
+import sys as _sys
+_DEFAULT_WORKER_TOKEN = "nastya-local-dev" if getattr(_sys, "frozen", False) else "change-me"
+WORKER_TOKEN: str = os.getenv("WORKER_TOKEN", _DEFAULT_WORKER_TOKEN)
 
 # ---------------------------------------------------------------------------
 # Хранилище документов
@@ -43,7 +47,7 @@ CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "*").split(",")
 # Прочее
 # ---------------------------------------------------------------------------
 APP_TITLE: str = "Nastya Orchestrator"
-APP_VERSION: str = "0.1.4"
+APP_VERSION: str = "0.1.6"
 CHANGELOG_PATH: Path = BASE_DIR / "CHANGELOG.md"
 
 

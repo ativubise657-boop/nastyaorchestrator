@@ -1,0 +1,75 @@
+.remote-toast {
+  position: fixed;
+  top: 72px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 320px;
+  max-width: 420px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #1e3a8a 0%, #0e639c 100%);
+  color: #ffffff;
+  border: 1px solid rgba(94, 234, 212, 0.4);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  animation: remote-toast-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+@keyframes remote-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(40px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.remote-toast__icon {
+  font-size: 26px;
+  line-height: 1;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+.remote-toast__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.remote-toast__title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 4px;
+  color: #ffffff;
+}
+
+.remote-toast__message {
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.85);
+  word-wrap: break-word;
+}
+
+.remote-toast__close {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.remote-toast__close:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.15);
+}

@@ -33,7 +33,7 @@ class TaskQueue:
         project_id: str,
         prompt: str,
         mode: str = "auto",
-        model: str = "glm-5-turbo",
+        model: str = "gpt-5.4",
         task_id: str | None = None,
     ) -> str:
         """

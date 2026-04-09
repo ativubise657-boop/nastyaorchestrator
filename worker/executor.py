@@ -7,10 +7,13 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from worker.models_registry import get_model_id
 
@@ -68,6 +71,18 @@ class CodexExecutor:
     )
 
     def __init__(self, codex_binary: str = "codex", task_timeout: int = 600):
+        # При frozen (PyInstaller onefile) относительные пути нужно резолвить
+        # относительно распакованного _MEIPASS, а не cwd worker-процесса —
+        # иначе tools\codex-npx.cmd не находится в папке установки приложения.
+        if (
+            getattr(sys, "frozen", False)
+            and codex_binary
+            and not Path(codex_binary).is_absolute()
+        ):
+            candidate = Path(getattr(sys, "_MEIPASS", "")) / codex_binary
+            if candidate.is_file():
+                logger.info("frozen: codex_binary resolved to %s", candidate)
+                codex_binary = str(candidate)
         self.binary = codex_binary
         self.task_timeout = task_timeout
         self._current_proc: subprocess.Popen | None = None
@@ -342,7 +357,7 @@ class CodexExecutor:
         prompt: str,
         project_path: str | None = None,
         mode: str = "solo",
-        model: str = "glm-5-turbo",
+        model: str = "gpt-5.4",
         chat_history: list[dict] | None = None,
         project: dict | None = None,
         git_url: str | None = None,
@@ -360,7 +375,7 @@ class CodexExecutor:
                 github_context = await build_project_context(git_url)
                 if github_context:
                     logger.info("GitHub контекст подтянут: %d символов", len(github_context))
-            except Exception as exc:
+            except (httpx.HTTPError, httpx.TimeoutException, OSError) as exc:
                 logger.warning("Не удалось подтянуть GitHub контекст: %s", exc)
         elif all_projects:
             try:
@@ -369,7 +384,7 @@ class CodexExecutor:
                 github_context = await build_all_projects_context(all_projects)
                 if github_context:
                     logger.info("GitHub контекст всех проектов: %d символов", len(github_context))
-            except Exception as exc:
+            except (httpx.HTTPError, httpx.TimeoutException, OSError) as exc:
                 logger.warning("Не удалось подтянуть контекст всех проектов: %s", exc)
 
         crm_context = None
@@ -379,7 +394,7 @@ class CodexExecutor:
             crm_context = await build_crm_context(prompt)
             if crm_context:
                 logger.info("CRM контекст подтянут: %d символов", len(crm_context))
-        except Exception as exc:
+        except (httpx.HTTPError, httpx.TimeoutException, OSError) as exc:
             logger.warning("Не удалось получить CRM контекст: %s", exc)
 
         context_prompt = await self._build_context_prompt(

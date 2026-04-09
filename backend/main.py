@@ -17,6 +17,7 @@ from backend.core.config import APP_TITLE, APP_VERSION, BASE_DIR, CORS_ORIGINS, 
 from backend.core.state import State
 from backend.core.queue import TaskQueue
 from backend.core import proxy as proxy_module
+from backend.core.remote_config import fetch_remote_config
 
 # Настраиваем логирование
 logging.basicConfig(
@@ -52,21 +53,33 @@ async def _publish_event(app: FastAPI, event_type: str, data: dict) -> None:
 
 import uuid
 
-# Проекты по умолчанию (git_url для auto-clone на сервере Насти)
-_DEFAULT_PROJECTS = [
-    {"name": "geniled.ru", "description": "Корпоративный сайт + каталог (Bitrix + Aspro.Max)", "path": "/mnt/d/workprojects/geniled.ru", "git_url": "https://github.com/Gypsea67/geniled.ru.git"},
-    {"name": "geniled-shop", "description": "Интернет-магазин (Bitrix + Аспро Премьер)", "path": "/mnt/d/Share/geniled-shop", "git_url": "https://github.com/Gypsea67/geniled-shop.git"},
-    {"name": "analyticsgeniled", "description": "Аналитика продаж (FastAPI + Python)", "path": "/mnt/d/Share/analyticsgeniled", "git_url": "https://github.com/Gypsea67/analyticsgeniled.git"},
-    {"name": "parkcalc", "description": "Конструктор парков (React + Docker)", "path": "/mnt/d/Share/parkcalcdocker", "git_url": "https://github.com/Gypsea67/parkcalc.git"},
-    {"name": "gypseaorchestrator", "description": "Gypsea Orchestrator (React + FastAPI)", "path": "/mnt/d/Share/gypseaorchestrator", "git_url": "https://github.com/Gypsea67/gypseaorchestrator.git"},
-    {"name": "sparta", "description": "Sparta — МП агенты (Next.js + FastAPI)", "path": "/mnt/d/Share/gypseaclawsparta", "git_url": "https://github.com/Gypsea67/sparta.git"},
-    {
-        "name": "nastyaorchestrator",
-        "description": "Оркестратор Насти (FastAPI + React 19)",
-        "path": str(BASE_DIR),
-        "git_url": "https://github.com/ativubise657-boop/nastyaorchestrator.git",
-    },
-]
+# Дефолтных проектов нет — пользователь сам добавляет через UI (кнопка "+").
+_DEFAULT_PROJECTS: list[dict] = []
+
+
+def _recover_orphan_tasks(state: State) -> int:
+    """
+    При старте backend помечаем orphan-задачи в статусе `running` как `failed`.
+
+    Порог: started_at < now - 5 минут. Worker шлёт heartbeat через backend
+    каждые несколько секунд, поэтому задача, которая "running" дольше 5 минут
+    без backend'а — реально осиротевшая. Более короткий порог опасен: Tauri
+    может рестартовать backend пока worker жив и в середине задачи — тогда
+    мы бы сбросили in-flight работу.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # Только задачи, стартовавшие более 5 минут назад — защита in-flight
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    cur = state.execute(
+        "UPDATE tasks SET status = 'failed', error = ?, completed_at = ? "
+        "WHERE status = 'running' AND (started_at IS NULL OR started_at < ?)",
+        ("Worker завершился до окончания задачи (auto-recovery)", now_iso, cutoff),
+    )
+    count = cur.rowcount
+    state.commit()
+    if count:
+        logger.warning("Auto-recovery: %d orphan running tasks → failed", count)
+    return count
 
 
 def _purge_old_data(state: State, days: int = 30) -> int:
@@ -105,33 +118,28 @@ def _purge_old_data(state: State, days: int = 30) -> int:
 
 
 def _seed_projects(state: State) -> None:
-    """Upsert проектов — добавляет новые, обновляет path/git_url существующих."""
+    """
+    Заселяем дефолтные проекты ТОЛЬКО если БД полностью пустая (первый запуск).
+    Если в БД уже есть хоть один проект — не трогаем, чтобы:
+      1) удалённые пользователем дефолты не воскресали при каждом старте
+      2) обновление приложения не перезаписывало пользовательские path/description
+    """
     now = datetime.now(timezone.utc).isoformat()
-    existing = {
-        r["name"]: r["id"]
-        for r in state.fetchall("SELECT id, name FROM projects")
-    }
+    existing = state.fetchall("SELECT id FROM projects LIMIT 1")
+    if existing:
+        return  # БД не пустая — ничего не делаем
 
     added = 0
-    updated = 0
     for p in _DEFAULT_PROJECTS:
-        git_url = p.get("git_url", "")
-        if p["name"] in existing:
-            state.execute(
-                "UPDATE projects SET path = ?, description = ?, git_url = ? WHERE id = ?",
-                (p["path"], p["description"], git_url, existing[p["name"]]),
-            )
-            updated += 1
-        else:
-            state.execute(
-                "INSERT INTO projects (id, name, description, path, git_url, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), p["name"], p["description"], p["path"], git_url, now),
-            )
-            added += 1
+        state.execute(
+            "INSERT INTO projects (id, name, description, path, git_url, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), p["name"], p["description"], p["path"], p.get("git_url", ""), now),
+        )
+        added += 1
 
     state.commit()
-    if added or updated:
-        logger.info("Проекты: +%d новых, %d обновлено (всего %d)", added, updated, len(_DEFAULT_PROJECTS))
+    if added:
+        logger.info("Первый запуск: заселили %d дефолтных проектов", added)
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +180,45 @@ async def lifespan(app: FastAPI):
     # Создаём дефолтный проект если БД пустая
     _seed_projects(app.state.db)
 
+    # Восстановление orphan running-задач после падения worker'а
+    _recover_orphan_tasks(app.state.db)
+
+    # Remote config — подтягиваем настройки из GitHub (emoji в шапку,
+    # флаги фичей, дефолты моделей). Ошибки не блокируют startup.
+    try:
+        app.state.remote_config = fetch_remote_config()
+    except Exception as exc:
+        logger.warning("Remote config fetch failed: %s", exc)
+        app.state.remote_config = {}
+
+    # Background refresh каждые 5 минут — если Дима обновил remote-config.json
+    # в git → Настя при следующем refresh получит новую версию без перезапуска.
+    # Если изменился — публикуется SSE событие `remote_config_updated`,
+    # frontend показывает всплывашку "Доступно обновление".
+    async def _remote_config_refresher():
+        import asyncio
+        await asyncio.sleep(30)  # не сразу после startup
+        while True:
+            try:
+                new_cfg = fetch_remote_config()
+                old_cfg = app.state.remote_config or {}
+                if new_cfg and new_cfg != old_cfg:
+                    app.state.remote_config = new_cfg
+                    await app.state.publish_event(
+                        "remote_config_updated",
+                        {"config": new_cfg, "changed": True},
+                    )
+                    logger.info(
+                        "Remote config изменился (v%s → v%s), разослан SSE event",
+                        old_cfg.get("version", "?"),
+                        new_cfg.get("version", "?"),
+                    )
+            except Exception as exc:
+                logger.debug("Remote config refresh error: %s", exc)
+            await asyncio.sleep(300)  # 5 минут
+
+    asyncio.create_task(_remote_config_refresher())
+
     # Purge старых данных (>30 дней)
     purged = _purge_old_data(app.state.db)
     if purged:
@@ -195,10 +242,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — на проде nginx ограничит до конкретных origins
+# CORS — если пользователь явно задал CORS_ORIGINS в env, используем его.
+# Иначе — жёсткий whitelist Tauri webview + локалка (не "*", чтобы чужая
+# JS на машине не могла стучаться в localhost:8781).
+_TAURI_ALLOWED_ORIGINS = [
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "http://localhost",
+    "http://localhost:1420",   # Vite dev
+    "http://127.0.0.1:1420",
+    "http://127.0.0.1:8781",   # self-origin SPA
+]
+_cors_origins = CORS_ORIGINS if CORS_ORIGINS and CORS_ORIGINS != ["*"] else _TAURI_ALLOWED_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS if CORS_ORIGINS != ["*"] else ["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

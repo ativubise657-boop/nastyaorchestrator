@@ -36,7 +36,7 @@ class State:
         project_id   TEXT NOT NULL,
         prompt       TEXT NOT NULL,
         mode         TEXT DEFAULT 'auto',
-        model        TEXT DEFAULT 'glm-5-turbo',
+        model        TEXT DEFAULT 'gpt-5.4',
         status       TEXT DEFAULT 'queued',
         result       TEXT,
         error        TEXT,
@@ -94,6 +94,7 @@ class State:
     -- Индексы для частых запросов
     CREATE INDEX IF NOT EXISTS idx_tasks_status        ON tasks(status);
     CREATE INDEX IF NOT EXISTS idx_tasks_project       ON tasks(project_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
     CREATE INDEX IF NOT EXISTS idx_messages_project    ON chat_messages(project_id);
     CREATE INDEX IF NOT EXISTS idx_documents_project   ON documents(project_id);
     CREATE INDEX IF NOT EXISTS idx_documents_folder    ON documents(folder_id);

@@ -168,6 +168,18 @@ export function useSSE() {
       }
     })
 
+    // Remote config обновлён на сервере — применяем + показываем всплывашку
+    es.addEventListener('remote_config_updated', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data?.config) {
+          useStore.getState().applyRemoteConfig(data.config)
+        }
+      } catch (err) {
+        console.warn('SSE remote_config_updated parse error:', err)
+      }
+    })
+
     // Ping — просто игнорируем, он нужен чтобы соединение не закрылось
     es.addEventListener('ping', () => {})
 

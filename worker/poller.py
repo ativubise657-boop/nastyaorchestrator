@@ -53,10 +53,14 @@ class Poller:
             max_tool_rounds=config.aitunnel_max_tool_rounds,
             task_timeout=config.task_timeout,
         )
+        # Shared httpx-клиент — пулинг соединений через opera-proxy,
+        # экономит TCP+TLS handshake на каждый heartbeat/stream_chunk.
+        self._http = httpx.AsyncClient(timeout=_QUEUE_HTTP_TIMEOUT)
         self.pusher = ResultPusher(
             server_url=config.server_url,
             token=config.worker_token,
             worker_id=config.worker_id,
+            http_client=self._http,
         )
         self._headers = {
             "Authorization": f"Bearer {config.worker_token}",
@@ -179,6 +183,10 @@ class Poller:
                 await heartbeat_task
             except asyncio.CancelledError:
                 pass
+            try:
+                await self._http.aclose()
+            except Exception:
+                pass
             logger.info("Worker остановлен.")
 
     # ─── Внутренние методы ──────────────────────────────────────────
@@ -224,8 +232,7 @@ class Poller:
         """
         url = f"{self.config.server_url}/api/queue/next"
         try:
-            async with httpx.AsyncClient(timeout=_QUEUE_HTTP_TIMEOUT) as client:
-                response = await client.get(url, headers=self._headers)
+            response = await self._http.get(url, headers=self._headers)
 
             if response.status_code == 204:
                 # Очередь пуста
@@ -289,7 +296,7 @@ class Poller:
 
         # Режим может быть задан явно в задаче или определяется автоматически
         mode: str = task.get("mode") or resolve_mode(prompt)
-        model: str = task.get("model", "glm-5-turbo")
+        model: str = task.get("model", "gpt-5.4")
 
         # Контекст из backend (история чата + проект + git_url + all_projects + документы)
         chat_history: list[dict] | None = task.get("chat_history")

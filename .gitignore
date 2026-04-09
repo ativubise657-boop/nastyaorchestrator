@@ -32,6 +32,12 @@ build/worker/
 .venv-build/
 /dist/
 
+# Tauri signing password (локальный, не коммитится)
+sign-password.bat
+
+# Локальные dev-env с GITHUB_PAT для Push config — никогда в git
+dev-gui.env.bat
+
 # Локальные документы Насти (не должны попадать в git)
 herdocs/
 

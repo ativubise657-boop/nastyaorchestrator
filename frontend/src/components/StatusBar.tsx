@@ -75,6 +75,9 @@ export function StatusBar() {
   const appVersion = useAppVersion()
   const projects = useProjects()
   const getAppUpdatePreview = useStore((s) => s.getAppUpdatePreview)
+  const remoteConfig = useStore((s) => s.remoteConfig)
+  const remoteConfigEmoji = remoteConfig?.header_emoji as string | undefined
+  const remoteConfigVersion = remoteConfig?.version as number | string | undefined
   const [showIntegrations, setShowIntegrations] = useState(false)
   const [showUpdate, setShowUpdate] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -153,7 +156,18 @@ export function StatusBar() {
       <div className="statusbar__brand">
         <img src="/avatar-nastya.png" alt="Настя" className="statusbar__avatar" />
         <div className="statusbar__brand-text">
-          <span className="statusbar__title">Nastya Orchestrator</span>
+          <span className="statusbar__title">
+            Nastya Orchestrator
+            {remoteConfigEmoji && (
+              <span
+                className="statusbar__remote-emoji"
+                title={`Remote config v${remoteConfigVersion ?? '?'}`}
+                style={{ marginLeft: 8 }}
+              >
+                {remoteConfigEmoji}
+              </span>
+            )}
+          </span>
           {appVersion && <span className="statusbar__version">v{appVersion}</span>}
         </div>
       </div>

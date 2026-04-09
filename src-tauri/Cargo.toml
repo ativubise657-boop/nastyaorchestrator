@@ -1,6 +1,6 @@
 [package]
 name = "nastya-orchestrator"
-version = "0.1.0"
+version = "0.1.6"
 description = "Nastya Orchestrator desktop shell"
 authors = ["nastyaorc"]
 edition = "2021"
@@ -26,7 +26,7 @@ tauri-plugin-dialog = "2"       # модалки об ошибках бэкен�
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
-tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
 
 [features]
 # по умолчанию никаких custom-protocol хаков, обычный prod билд

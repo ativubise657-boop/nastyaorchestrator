@@ -3,6 +3,7 @@ import { StatusBar } from './components/StatusBar'
 import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './components/ChatPanel'
 import { DocPanel } from './components/DocPanel'
+import { RemoteConfigToast } from './components/RemoteConfigToast'
 import { useStore, useSidebarOpen, useSelectedProjectId } from './stores'
 import { useSSE } from './hooks/useSSE'
 import './App.css'
@@ -31,9 +32,20 @@ export default function App() {
   // Подключаем SSE
   useSSE()
 
-  // Загружаем проекты при старте
+  // Загружаем проекты + remote config при старте
   useEffect(() => {
     useStore.getState().loadProjects()
+    useStore.getState().loadRemoteConfig()
+  }, [])
+
+  // Периодический refresh remote config (каждые 2 минуты)
+  // Если бэкенд обнаружил новую версию через фоновый refresher —
+  // SSE event прилетает через useSSE, здесь просто страховочный poll.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      useStore.getState().loadRemoteConfig()
+    }, 120000)
+    return () => clearInterval(timer)
   }, [])
 
   // Загружаем документы, папки и ссылки при смене проекта
@@ -114,6 +126,7 @@ export default function App() {
   return (
     <div className="app">
       <StatusBar />
+      <RemoteConfigToast />
 
       <div className="app__body">
         <Sidebar />
