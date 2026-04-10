@@ -127,10 +127,31 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
+      - name: Decode signing key (base64 → raw minisign format)
+        # Файл .tauri/nastya.key хранится в base64-кодированном виде.
+        # GitHub Secret содержит base64(raw_key). Tauri CLI ожидает raw_key
+        # (две строки: "untrusted comment: ..." + base64-encoded secret).
+        # Декодируем и прокидываем через GITHUB_ENV (multiline delimiter).
+        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: pwsh
+        run: |
+          try {
+            $decoded = [System.Text.Encoding]::UTF8.GetString(
+              [System.Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY)
+            ).Trim()
+            $lineCount = ($decoded -split "`n").Count
+            Write-Host "Signing key decoded: $lineCount lines"
+            # Multiline env через heredoc delimiter
+            "TAURI_SIGNING_PRIVATE_KEY<<SIGNING_KEY_EOF" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+            $decoded | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+            "SIGNING_KEY_EOF" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          } catch {
+            Write-Warning "Failed to decode signing key as base64, using as-is (may already be raw format)"
+          }
+
       - name: Build Tauri application
-        # TAURI_SIGNING_PRIVATE_KEY + PASSWORD уже в job-level env.
-        # Если secrets заданы — cargo tauri build подпишет артефакты и сгенерирует .nsis.zip.sig.
-        # Если secrets пустые — билд пройдёт без подписи (но Tauri Updater тогда не будет работать).
+        # TAURI_SIGNING_PRIVATE_KEY (уже декодированный) + PASSWORD в job-level env.
+        # cargo tauri build подпишет артефакты и сгенерирует .nsis.zip + .nsis.zip.sig.
         run: cargo tauri build
 
       - name: Collect release artifacts
