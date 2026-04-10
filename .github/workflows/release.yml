@@ -127,27 +127,25 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
-      - name: Decode signing key (base64 → raw minisign format)
-        # Файл .tauri/nastya.key хранится в base64-кодированном виде.
-        # GitHub Secret содержит base64(raw_key). Tauri CLI ожидает raw_key
-        # (две строки: "untrusted comment: ..." + base64-encoded secret).
-        # Декодируем и прокидываем через GITHUB_ENV (multiline delimiter).
+      - name: Decode signing key (base64 → temp file)
+        # GitHub Secret содержит base64(raw_key). Tauri CLI ожидает raw minisign
+        # text ("untrusted comment: ...\n<base64 secret>"). Декодируем в temp файл
+        # и подставляем ПУТЬ в env — Tauri принимает и путь, и содержимое.
+        # Файл чище чем GITHUB_ENV multiline: нет BOM, CRLF, encoding quirks.
         if: env.TAURI_SIGNING_PRIVATE_KEY != ''
         shell: pwsh
         run: |
-          try {
-            $decoded = [System.Text.Encoding]::UTF8.GetString(
-              [System.Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY)
-            ).Trim()
-            $lineCount = ($decoded -split "`n").Count
-            Write-Host "Signing key decoded: $lineCount lines"
-            # Multiline env через heredoc delimiter
-            "TAURI_SIGNING_PRIVATE_KEY<<SIGNING_KEY_EOF" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-            $decoded | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-            "SIGNING_KEY_EOF" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          } catch {
-            Write-Warning "Failed to decode signing key as base64, using as-is (may already be raw format)"
-          }
+          $decoded = [System.Text.Encoding]::UTF8.GetString(
+            [System.Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY)
+          ).Trim()
+          $lineCount = ($decoded -split "`n").Count
+          Write-Host "Signing key decoded: $lineCount lines"
+          $keyPath = Join-Path $env:RUNNER_TEMP "tauri-signing.key"
+          # WriteAllText без BOM, с LF
+          [System.IO.File]::WriteAllText($keyPath, $decoded + "`n")
+          Write-Host "Key written to $keyPath"
+          # Перезаписываем env: Tauri CLI увидит путь к файлу
+          echo "TAURI_SIGNING_PRIVATE_KEY=$keyPath" >> $env:GITHUB_ENV
 
       - name: Build Tauri application
         # TAURI_SIGNING_PRIVATE_KEY (уже декодированный) + PASSWORD в job-level env.
