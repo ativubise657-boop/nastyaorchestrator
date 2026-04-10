@@ -127,25 +127,22 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
-      - name: Decode signing key (base64 → temp file)
+      - name: Decode signing key (base64 → raw minisign)
         # GitHub Secret содержит base64(raw_key). Tauri CLI ожидает raw minisign
-        # text ("untrusted comment: ...\n<base64 secret>"). Декодируем в temp файл
-        # и подставляем ПУТЬ в env — Tauri принимает и путь, и содержимое.
-        # Файл чище чем GITHUB_ENV multiline: нет BOM, CRLF, encoding quirks.
+        # text ("untrusted comment: ...\n<base64 secret>") в TAURI_SIGNING_PRIVATE_KEY.
+        # Bash (Git Bash) на Windows runner — без BOM, без CRLF, heredoc в GITHUB_ENV
+        # работает чисто (в отличие от PowerShell Out-File).
         if: env.TAURI_SIGNING_PRIVATE_KEY != ''
-        shell: pwsh
+        shell: bash
         run: |
-          $decoded = [System.Text.Encoding]::UTF8.GetString(
-            [System.Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY)
-          ).Trim()
-          $lineCount = ($decoded -split "`n").Count
-          Write-Host "Signing key decoded: $lineCount lines"
-          $keyPath = Join-Path $env:RUNNER_TEMP "tauri-signing.key"
-          # WriteAllText без BOM, с LF
-          [System.IO.File]::WriteAllText($keyPath, $decoded + "`n")
-          Write-Host "Key written to $keyPath"
-          # Перезаписываем env: Tauri CLI увидит путь к файлу
-          echo "TAURI_SIGNING_PRIVATE_KEY=$keyPath" >> $env:GITHUB_ENV
+          decoded=$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d)
+          line_count=$(echo "$decoded" | wc -l)
+          echo "Signing key decoded: $line_count lines"
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY<<SIGNING_KEY_EOF"
+            echo "$decoded"
+            echo "SIGNING_KEY_EOF"
+          } >> "$GITHUB_ENV"
 
       - name: Build Tauri application
         # TAURI_SIGNING_PRIVATE_KEY (уже декодированный) + PASSWORD в job-level env.
