@@ -128,28 +128,11 @@ jobs:
         run: cargo install tauri-cli --version "^2.0" --locked
 
       - name: Build Tauri application (signed)
-        # Secret содержит ТОЛЬКО base64-данные ключа (одна строка).
-        # Minisign формат: "untrusted comment: ...\n<base64 key>".
-        # 1. Записываем ключ в файл в правильном формате
-        # 2. Конвертируем путь в Windows-style через cygpath (Rust/Tauri — нативный Windows binary)
-        # 3. Tauri CLI: если TAURI_SIGNING_PRIVATE_KEY — существующий файл, читает из него
-        # Всё в одном bash-шаге чтобы избежать cross-step проблем с GITHUB_ENV.
-        shell: bash
-        run: |
-          KEY_DATA="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '\r\n ')"
-          UNIX_PATH="$RUNNER_TEMP/tauri.key"
-          printf 'untrusted comment: rsign encrypted secret key\n%s\n' "$KEY_DATA" > "$UNIX_PATH"
-          WIN_PATH="$(cygpath -w "$UNIX_PATH")"
-          echo "=== Signing key debug ==="
-          echo "Unix path: $UNIX_PATH"
-          echo "Windows path: $WIN_PATH"
-          echo "File exists: $(test -f "$UNIX_PATH" && echo YES || echo NO)"
-          echo "Lines: $(wc -l < "$UNIX_PATH")"
-          echo "Bytes: $(wc -c < "$UNIX_PATH")"
-          echo "First 40 chars: $(head -c 40 "$UNIX_PATH")"
-          echo "========================="
-          export TAURI_SIGNING_PRIVATE_KEY="$WIN_PATH"
-          cargo tauri build
+        # TAURI_SIGNING_PRIVATE_KEY (из job-level env) = base64-encoded minisign key.
+        # Формат: base64(comment_line + "\n" + key_data_line).
+        # Tauri CLI САМА декодирует base64 → получает raw minisign format → подписывает.
+        # НЕ нужно декодировать вручную — Tauri ожидает именно base64.
+        run: cargo tauri build
 
       - name: Collect release artifacts
         shell: pwsh
