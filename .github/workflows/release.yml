@@ -127,11 +127,18 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
-      - name: Build Tauri application
-        # TAURI_SIGNING_PRIVATE_KEY (raw minisign text) + PASSWORD в job-level env.
-        # Secret содержит raw ключ напрямую (две строки: comment + base64 secret).
-        # cargo tauri build подпишет артефакты и сгенерирует .nsis.zip + .nsis.zip.sig.
-        run: cargo tauri build
+      - name: Build Tauri application (signed)
+        # TAURI_SIGNING_PRIVATE_KEY secret содержит ТОЛЬКО base64-данные ключа
+        # (одна строка, без comment-хедера). Minisign формат требует две строки:
+        #   untrusted comment: rsign encrypted secret key
+        #   <base64 key data>
+        # Собираем полный ключ через printf в том же bash-процессе где cargo.
+        # Причина: GitHub Secrets слипает multiline → newline теряется →
+        # Tauri не может parse'ить. Одна строка в secret = bulletproof.
+        shell: bash
+        run: |
+          export TAURI_SIGNING_PRIVATE_KEY="$(printf 'untrusted comment: rsign encrypted secret key\n%s\n' "$TAURI_SIGNING_PRIVATE_KEY")"
+          cargo tauri build
 
       - name: Collect release artifacts
         shell: pwsh

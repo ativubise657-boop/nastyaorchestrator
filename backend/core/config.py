@@ -47,7 +47,7 @@ CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "*").split(",")
 # Прочее
 # ---------------------------------------------------------------------------
 APP_TITLE: str = "Nastya Orchestrator"
-APP_VERSION: str = "6.0.0"
+APP_VERSION: str = "7.0.0"
 CHANGELOG_PATH: Path = BASE_DIR / "CHANGELOG.md"
 
 
