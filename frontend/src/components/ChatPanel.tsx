@@ -333,26 +333,44 @@ export function ChatPanel() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
 
-  // Прикреплённые изображения (paste / drag-n-drop / кнопка 📎)
+  // Прикреплённые файлы (paste / drag-n-drop / кнопка 📎)
   const [attachedImages, setAttachedImages] = useState<File[]>([])
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Модель до автосвитча — для восстановления после отправки
+  const modelBeforeAutoSwitch = useRef<ChatModel | null>(null)
 
-  // Добавить изображения в очередь на отправку
+  // Добавить файлы в очередь на отправку
   const attachImages = useCallback((files: File[]) => {
-    const images = files.filter(f => f.type.startsWith('image/'))
-    if (!images.length) return
-    setAttachedImages(prev => [...prev, ...images])
-    // Генерируем превью через URL.createObjectURL
-    const urls = images.map(f => URL.createObjectURL(f))
+    if (!files.length) return
+    setAttachedImages(prev => [...prev, ...files])
+    // Генерируем превью: для изображений — URL, для остальных — пустая строка
+    const urls = files.map(f => f.type.startsWith('image/') ? URL.createObjectURL(f) : '')
     setImagePreviews(prev => [...prev, ...urls])
+    // Автопереключение на Gemini Flash при прикреплении не-изображений
+    const hasDocuments = files.some(f => !f.type.startsWith('image/'))
+    if (hasDocuments) {
+      const currentModel = useStore.getState().selectedModel
+      if (currentModel !== 'gemini-2.5-flash') {
+        modelBeforeAutoSwitch.current = currentModel
+        useStore.getState().setSelectedModel('gemini-2.5-flash')
+      }
+    }
   }, [])
 
-  // Удалить прикреплённое изображение по индексу
+  // Удалить прикреплённый файл по индексу
   const removeAttachedImage = useCallback((index: number) => {
-    setAttachedImages(prev => prev.filter((_, i) => i !== index))
+    setAttachedImages(prev => {
+      const next = prev.filter((_, i) => i !== index)
+      // Если убрали все документы — вернуть модель
+      if (next.length === 0 && modelBeforeAutoSwitch.current) {
+        useStore.getState().setSelectedModel(modelBeforeAutoSwitch.current)
+        modelBeforeAutoSwitch.current = null
+      }
+      return next
+    })
     setImagePreviews(prev => {
-      URL.revokeObjectURL(prev[index])
+      if (prev[index]) URL.revokeObjectURL(prev[index])
       return prev.filter((_, i) => i !== index)
     })
   }, [])
@@ -499,9 +517,14 @@ export function ChatPanel() {
       // Обновить список документов чтобы worker увидел новые
       useStore.getState().loadDocuments(selectedProjectId)
       // Очистить превью
-      imagePreviews.forEach(u => URL.revokeObjectURL(u))
+      imagePreviews.forEach(u => { if (u) URL.revokeObjectURL(u) })
       setAttachedImages([])
       setImagePreviews([])
+      // Вернуть модель если был автосвитч
+      if (modelBeforeAutoSwitch.current) {
+        useStore.getState().setSelectedModel(modelBeforeAutoSwitch.current)
+        modelBeforeAutoSwitch.current = null
+      }
     }
 
     await handleSend(text)
@@ -636,12 +659,18 @@ export function ChatPanel() {
             </button>
           </div>
         )}
-        {/* Превью прикреплённых изображений */}
+        {/* Превью прикреплённых файлов */}
         {imagePreviews.length > 0 && (
           <div className="chat-input__previews">
             {imagePreviews.map((url, i) => (
-              <div key={url} className="chat-input__preview">
-                <img src={url} alt={attachedImages[i]?.name || 'preview'} />
+              <div key={url || `file-${i}`} className="chat-input__preview">
+                {url ? (
+                  <img src={url} alt={attachedImages[i]?.name || 'preview'} />
+                ) : (
+                  <div className="chat-input__preview-file">
+                    <span className="chat-input__preview-file-icon">📄</span>
+                  </div>
+                )}
                 <button
                   className="chat-input__preview-remove"
                   onClick={() => removeAttachedImage(i)}
@@ -850,6 +879,7 @@ const MODEL_OPTIONS: Array<{ id: ChatModel; label: string }> = [
   { id: 'gpt-5.4-nano', label: 'GPT 5.4 Nano' },
   { id: 'gpt-5.4', label: 'GPT 5' },
   { id: 'gpt-5.3-codex', label: 'GPT 5 Thinking' },
+  { id: 'gemini-2.5-flash', label: 'Gemini Flash' },
 ]
 
 function ModelSelector({ selected }: { selected: ChatModel }) {

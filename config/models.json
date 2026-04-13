@@ -15,7 +15,9 @@
     "opus": "gpt-5.3-codex",
     "gpt-5.4-mini": "glm-4.7-flash",
     "gpt5": "gpt-5.4",
-    "gpt5-thinking": "gpt-5.3-codex"
+    "gpt5-thinking": "gpt-5.3-codex",
+    "gemini-2.5-flash": "gemini-2.5-flash",
+    "gemini": "gemini-2.5-flash"
   },
   "default_chat": "glm-5-turbo"
 }

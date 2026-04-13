@@ -45,7 +45,10 @@ hiddenimports = [
 
 hiddenimports += collect_submodules("markitdown")
 
-datas = []
+datas = [
+    # config/models.json — реестр моделей, нужен worker'у в runtime
+    (str(ROOT / "config" / "models.json"), "config"),
+]
 datas += collect_data_files("markitdown")
 datas += collect_data_files("pdfminer")
 datas += collect_data_files("magika")

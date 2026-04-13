@@ -5,9 +5,14 @@
 """
 
 import json
+import sys
 from pathlib import Path
 
-_MODELS_PATH = Path(__file__).parent.parent / "config" / "models.json"
+# Во frozen-режиме (PyInstaller) config/ лежит в _MEIPASS, не рядом с __file__
+if getattr(sys, "frozen", False):
+    _MODELS_PATH = Path(getattr(sys, "_MEIPASS", "")) / "config" / "models.json"
+else:
+    _MODELS_PATH = Path(__file__).parent.parent / "config" / "models.json"
 _cache: dict | None = None
 
 

@@ -20,7 +20,7 @@ export interface CreateProjectData {
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-export type ChatModel = 'glm-4.7-flash' | 'glm-5-turbo' | 'gpt-5.4-nano' | 'gpt-5.4' | 'gpt-5.3-codex'
+export type ChatModel = 'glm-4.7-flash' | 'glm-5-turbo' | 'gpt-5.4-nano' | 'gpt-5.4' | 'gpt-5.3-codex' | 'gemini-2.5-flash'
 
 // Дефолт модели — gpt-5.4 (codex CLI через opera-proxy → OpenAI).
 // Был glm-5-turbo (aitunnel) — переключили потому что Дима хочет codex.
@@ -35,11 +35,14 @@ const LEGACY_MODEL_ALIASES: Record<string, ChatModel> = {
   nano: 'gpt-5.4-nano',
   gpt5: 'gpt-5.4',
   'gpt5-thinking': 'gpt-5.3-codex',
+  gemini: 'gemini-2.5-flash',
+  'gemini-flash': 'gemini-2.5-flash',
   default: DEFAULT_CHAT_MODEL,
   max: DEFAULT_CHAT_MODEL,
   'gpt-5.4-mini': 'glm-4.7-flash',
   'gpt-5.4': 'gpt-5.4',
   'gpt-5.3-codex': 'gpt-5.3-codex',
+  'gemini-2.5-flash': 'gemini-2.5-flash',
 }
 
 function normalizeChatModel(model?: string | null): ChatModel {
@@ -49,7 +52,8 @@ function normalizeChatModel(model?: string | null): ChatModel {
     model === 'glm-5-turbo' ||
     model === 'gpt-5.4-nano' ||
     model === 'gpt-5.4' ||
-    model === 'gpt-5.3-codex'
+    model === 'gpt-5.3-codex' ||
+    model === 'gemini-2.5-flash'
   ) {
     return model
   }

@@ -18,6 +18,7 @@ from worker.circuit_breaker import can_execute, record_crash, record_success
 from worker.quality_gate import evaluate as qg_evaluate, should_retry as qg_should_retry
 from worker.commands import is_command, handle_command
 from worker.aitunnel_executor import AITunnelExecutor
+from worker.gemini_executor import GeminiExecutor
 from worker.config import WorkerConfig
 from worker.document_extractor import extract_documents
 from worker.executor import CodexExecutor
@@ -30,11 +31,17 @@ logger = logging.getLogger(__name__)
 # Таймаут запроса к очереди (секунды)
 _QUEUE_HTTP_TIMEOUT = 15
 _AITUNNEL_MODELS = {"glm-4.7-flash", "glm-5-turbo", "gpt-5.4-nano"}
+_GEMINI_MODELS = {"gemini-2.5-flash"}
 
 
 def _is_aitunnel_model(model: str) -> bool:
     resolved = (get_model_id(model) or model).strip().lower()
     return resolved in _AITUNNEL_MODELS
+
+
+def _is_gemini_model(model: str) -> bool:
+    resolved = (get_model_id(model) or model).strip().lower()
+    return resolved in _GEMINI_MODELS
 
 
 class Poller:
@@ -51,6 +58,9 @@ class Poller:
             base_url=config.aitunnel_base_url,
             request_timeout=config.aitunnel_request_timeout,
             max_tool_rounds=config.aitunnel_max_tool_rounds,
+            task_timeout=config.task_timeout,
+        )
+        self.gemini_executor = GeminiExecutor(
             task_timeout=config.task_timeout,
         )
         # Shared httpx-клиент — пулинг соединений через opera-proxy,
@@ -72,9 +82,11 @@ class Poller:
 
         # ID текущей задачи (для heartbeat)
         self._current_task_id: str | None = None
-        self._current_executor: CodexExecutor | AITunnelExecutor | None = None
+        self._current_executor: CodexExecutor | AITunnelExecutor | GeminiExecutor | None = None
 
-    def _get_executor(self, model: str) -> CodexExecutor | AITunnelExecutor:
+    def _get_executor(self, model: str) -> CodexExecutor | AITunnelExecutor | GeminiExecutor:
+        if _is_gemini_model(model):
+            return self.gemini_executor
         if _is_aitunnel_model(model):
             return self.aitunnel_executor
         return self.codex_executor

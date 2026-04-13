@@ -223,11 +223,16 @@ def cmd_debug_worker() -> list[str]:
 
 
 def cmd_kill_processes() -> list[str]:
+    # Убиваем sidecar-ы + zombie uvicorn worker-процессы (python.exe),
+    # которые могут держать порт 8781 после Kill All.
+    # wmic фильтрует python по CommandLine содержащему nastyaorc — безопасно.
     return [
         "cmd", "/c",
         "taskkill /F /IM nastya-backend.exe /IM nastya-worker.exe "
         "/IM nastya-orchestrator.exe "
         "/IM opera-proxy.exe /IM opera-proxy-x86_64-pc-windows-msvc.exe 2>nul & "
+        'wmic process where "Name=\'python.exe\' and CommandLine like \'%%nastyaorc%%\'" call terminate 2>nul & '
+        'wmic process where "Name=\'pythonw.exe\' and CommandLine like \'%%nastyaorc%%\'" call terminate 2>nul & '
         "echo done",
     ]
 
@@ -1116,7 +1121,7 @@ class DevGui:
             self.output_queue.put("__DONE__")
 
     def _taskkill_all_known(self) -> None:
-        """Убить все процессы приложения. Вывод в output_queue."""
+        """Убить все процессы приложения + zombie python/pythonw от nastyaorc."""
         names = [
             "nastya-backend.exe",
             "nastya-worker.exe",
@@ -1149,6 +1154,29 @@ class DevGui:
                 self.output_queue.put(f"  {line}\n")
         except Exception as exc:
             self.output_queue.put(f"[action] taskkill error: {exc}\n")
+
+        # Zombie uvicorn worker-процессы (python.exe/pythonw.exe) могут держать
+        # порт 8781 после Kill All. Убиваем только те, что запущены из nastyaorc.
+        for pyname in ("python.exe", "pythonw.exe"):
+            try:
+                r = subprocess.run(
+                    [
+                        "wmic", "process", "where",
+                        f"Name='{pyname}' and CommandLine like '%nastyaorc%'",
+                        "call", "terminate",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    encoding="oem",
+                    errors="replace",
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                out = (r.stdout or "").strip()
+                if out and "no instance" not in out.lower() and "нет экземпляров" not in out.lower():
+                    self.output_queue.put(f"  [zombie cleanup] {pyname}: terminated\n")
+            except Exception:
+                pass
+
         # Даём OS секунду чтобы освободить file handles
         time.sleep(1.2)
 

@@ -1106,3 +1106,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Превью для не-изображений (PDF, XLSX, DOCX) */
+.chat-input__preview-file {
+  width: 100%;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary, #1e1e2e);
+  border-radius: var(--radius-sm);
+}
+
+.chat-input__preview-file-icon {
+  font-size: 28px;
+}
