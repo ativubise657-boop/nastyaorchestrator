@@ -22,8 +22,13 @@ router = APIRouter()
 CONVERTIBLE_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".xlsx", ".xls", ".html", ".htm"}
 
 
-def _convert_to_text(file_path: Path, filename: str) -> Path | None:
+def _convert_to_text(
+    file_path: Path, filename: str, *, gemini_api_key: str = ""
+) -> Path | None:
     """Конвертирует документ в markdown при загрузке. Сохраняет .md файл рядом.
+
+    Для PDF: сначала Gemini API (OCR, таблицы, формулы), fallback на markitdown.
+    Для остальных (xlsx, docx, pptx, html): markitdown.
 
     Возвращает путь к .md файлу или None если конвертация не нужна/не удалась.
     """
@@ -32,13 +37,28 @@ def _convert_to_text(file_path: Path, filename: str) -> Path | None:
         return None
 
     text_path = file_path.with_suffix(".md")
+
+    # PDF: сначала Gemini (лучше качество — OCR, таблицы, формулы)
+    if ext == ".pdf" and gemini_api_key:
+        try:
+            from backend.core.gemini_pdf import parse_pdf
+            text = parse_pdf(file_path, gemini_api_key)
+            if text:
+                text_path.write_text(text, encoding="utf-8")
+                logger.info("PDF %s → Gemini (%d символов)", filename, len(text))
+                return text_path
+            logger.info("Gemini не справился с %s, fallback на markitdown", filename)
+        except Exception as exc:
+            logger.warning("Gemini PDF ошибка для %s: %s, fallback на markitdown", filename, exc)
+
+    # Markitdown для всех типов (и fallback для PDF)
     try:
         from markitdown import MarkItDown
         md = MarkItDown()
         result = md.convert(str(file_path))
         if result and result.text_content:
             text_path.write_text(result.text_content, encoding="utf-8")
-            logger.info("Документ %s сконвертирован в markdown (%d символов)", filename, len(result.text_content))
+            logger.info("Документ %s → markitdown (%d символов)", filename, len(result.text_content))
             return text_path
         else:
             logger.warning("markitdown вернул пустой результат для %s", filename)
@@ -183,7 +203,16 @@ async def upload_document(
     content_type = file.content_type or ""
 
     # Конвертируем в текст при загрузке (PDF, DOCX, XLSX → Markdown)
-    text_path = _convert_to_text(file_path, original_name)
+    # Gemini API key: из remote-config (ротация без ребилда) → env fallback
+    gemini_key = ""
+    try:
+        rc = getattr(request.app.state, "remote_config", {}) or {}
+        gemini_key = rc.get("gemini_api_key", "")
+    except Exception:
+        pass
+    if not gemini_key:
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    text_path = _convert_to_text(file_path, original_name, gemini_api_key=gemini_key)
 
     state.execute(
         """

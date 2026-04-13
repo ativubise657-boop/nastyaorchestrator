@@ -128,16 +128,27 @@ jobs:
         run: cargo install tauri-cli --version "^2.0" --locked
 
       - name: Build Tauri application (signed)
-        # TAURI_SIGNING_PRIVATE_KEY secret содержит ТОЛЬКО base64-данные ключа
-        # (одна строка, без comment-хедера). Minisign формат требует две строки:
-        #   untrusted comment: rsign encrypted secret key
-        #   <base64 key data>
-        # Собираем полный ключ через printf в том же bash-процессе где cargo.
-        # Причина: GitHub Secrets слипает multiline → newline теряется →
-        # Tauri не может parse'ить. Одна строка в secret = bulletproof.
+        # Secret содержит ТОЛЬКО base64-данные ключа (одна строка).
+        # Minisign формат: "untrusted comment: ...\n<base64 key>".
+        # 1. Записываем ключ в файл в правильном формате
+        # 2. Конвертируем путь в Windows-style через cygpath (Rust/Tauri — нативный Windows binary)
+        # 3. Tauri CLI: если TAURI_SIGNING_PRIVATE_KEY — существующий файл, читает из него
+        # Всё в одном bash-шаге чтобы избежать cross-step проблем с GITHUB_ENV.
         shell: bash
         run: |
-          export TAURI_SIGNING_PRIVATE_KEY="$(printf 'untrusted comment: rsign encrypted secret key\n%s\n' "$TAURI_SIGNING_PRIVATE_KEY")"
+          KEY_DATA="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '\r\n ')"
+          UNIX_PATH="$RUNNER_TEMP/tauri.key"
+          printf 'untrusted comment: rsign encrypted secret key\n%s\n' "$KEY_DATA" > "$UNIX_PATH"
+          WIN_PATH="$(cygpath -w "$UNIX_PATH")"
+          echo "=== Signing key debug ==="
+          echo "Unix path: $UNIX_PATH"
+          echo "Windows path: $WIN_PATH"
+          echo "File exists: $(test -f "$UNIX_PATH" && echo YES || echo NO)"
+          echo "Lines: $(wc -l < "$UNIX_PATH")"
+          echo "Bytes: $(wc -c < "$UNIX_PATH")"
+          echo "First 40 chars: $(head -c 40 "$UNIX_PATH")"
+          echo "========================="
+          export TAURI_SIGNING_PRIVATE_KEY="$WIN_PATH"
           cargo tauri build
 
       - name: Collect release artifacts

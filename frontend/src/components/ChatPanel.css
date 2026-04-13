@@ -991,3 +991,118 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ===== Drag-n-drop overlay ===== */
+.chat-panel--drag-over {
+  position: relative;
+}
+
+.chat-panel--drag-over::after {
+  content: '📎 Отпусти чтобы прикрепить';
+  position: absolute;
+  inset: 0;
+  background: rgba(155, 77, 202, 0.15);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: var(--accent);
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* ===== Кнопка прикрепления файла (📎) ===== */
+.chat-input__attach-btn {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.chat-input__attach-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.chat-input__attach-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-input__attach-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ===== Превью прикреплённых изображений ===== */
+.chat-input__previews {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px 4px;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+}
+
+.chat-input__preview {
+  position: relative;
+  flex-shrink: 0;
+  width: 72px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.chat-input__preview img {
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  display: block;
+}
+
+.chat-input__preview-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.chat-input__preview:hover .chat-input__preview-remove {
+  opacity: 1;
+}
+
+.chat-input__preview-remove svg {
+  width: 10px;
+  height: 10px;
+}
+
+.chat-input__preview-name {
+  display: block;
+  font-size: 9px;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

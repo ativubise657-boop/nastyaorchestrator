@@ -1,6 +1,7 @@
 {
-  "version": 1,
-  "updated_at": "2026-04-09T10:30:00Z",
+  "version": 2,
+  "updated_at": "2026-04-13T09:30:00Z",
   "header_emoji": "🚀",
-  "notes": "Первый remote-config. Если у Насти в шапке появился '🚀' рядом с версией — значит remote update работает."
+  "notes": "v2: добавлен gemini_api_key для PDF парсинга через Gemini 2.5 Flash",
+  "gemini_api_key": "AIzaSyDs8iJREm89WvYPaqbPqleqM7I1LZV2eIc"
 }

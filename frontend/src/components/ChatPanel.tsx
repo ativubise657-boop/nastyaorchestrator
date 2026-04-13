@@ -333,6 +333,61 @@ export function ChatPanel() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
 
+  // Прикреплённые изображения (paste / drag-n-drop / кнопка 📎)
+  const [attachedImages, setAttachedImages] = useState<File[]>([])
+  const [imagePreviews, setImagePreviews] = useState<string[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Добавить изображения в очередь на отправку
+  const attachImages = useCallback((files: File[]) => {
+    const images = files.filter(f => f.type.startsWith('image/'))
+    if (!images.length) return
+    setAttachedImages(prev => [...prev, ...images])
+    // Генерируем превью через URL.createObjectURL
+    const urls = images.map(f => URL.createObjectURL(f))
+    setImagePreviews(prev => [...prev, ...urls])
+  }, [])
+
+  // Удалить прикреплённое изображение по индексу
+  const removeAttachedImage = useCallback((index: number) => {
+    setAttachedImages(prev => prev.filter((_, i) => i !== index))
+    setImagePreviews(prev => {
+      URL.revokeObjectURL(prev[index])
+      return prev.filter((_, i) => i !== index)
+    })
+  }, [])
+
+  // Ctrl+V — вставка изображения из буфера обмена
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const imageFiles: File[] = []
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (file) imageFiles.push(file)
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      attachImages(imageFiles)
+    }
+  }, [attachImages])
+
+  // Drag-n-drop изображений на чат-панель
+  const [isDragging, setIsDragging] = useState(false)
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }, [])
+  const handleDragLeave = useCallback(() => setIsDragging(false), [])
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const files = Array.from(e.dataTransfer.files)
+    attachImages(files)
+  }, [attachImages])
+
   // Голосовой ввод: старт записи
   const startVoice = useCallback(() => {
     if (voice.isListening) return
@@ -426,6 +481,29 @@ export function ChatPanel() {
       textareaRef.current.style.height = 'auto'
     }
     setAutoScroll(true)
+
+    // Загрузить прикреплённые изображения как документы проекта (перед отправкой сообщения)
+    if (attachedImages.length > 0 && selectedProjectId) {
+      for (const file of attachedImages) {
+        try {
+          const formData = new FormData()
+          formData.append('file', file)
+          await fetch(`/api/documents/${selectedProjectId}/upload`, {
+            method: 'POST',
+            body: formData,
+          })
+        } catch (err) {
+          console.warn('Ошибка загрузки вложения:', err)
+        }
+      }
+      // Обновить список документов чтобы worker увидел новые
+      useStore.getState().loadDocuments(selectedProjectId)
+      // Очистить превью
+      imagePreviews.forEach(u => URL.revokeObjectURL(u))
+      setAttachedImages([])
+      setImagePreviews([])
+    }
+
     await handleSend(text)
     // Вернуть фокус в textarea
     textareaRef.current?.focus()
@@ -435,10 +513,16 @@ export function ChatPanel() {
     }, 100)
   }
 
-  const canSend = inputText.trim().length > 0 && !sendingMessage && !!selectedProjectId
+  const canSend = (inputText.trim().length > 0 || attachedImages.length > 0) && !sendingMessage && !!selectedProjectId
 
   return (
-    <div className="chat-panel" style={{ '--chat-font-size': `${chatFontSize}px` } as React.CSSProperties}>
+    <div
+      className={`chat-panel ${isDragging ? 'chat-panel--drag-over' : ''}`}
+      style={{ '--chat-font-size': `${chatFontSize}px` } as React.CSSProperties}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {/* Хедер чат-панели */}
       <div className="chat-panel__header">
         {/* Кнопка сайдбара (мобайл) */}
@@ -552,6 +636,26 @@ export function ChatPanel() {
             </button>
           </div>
         )}
+        {/* Превью прикреплённых изображений */}
+        {imagePreviews.length > 0 && (
+          <div className="chat-input__previews">
+            {imagePreviews.map((url, i) => (
+              <div key={url} className="chat-input__preview">
+                <img src={url} alt={attachedImages[i]?.name || 'preview'} />
+                <button
+                  className="chat-input__preview-remove"
+                  onClick={() => removeAttachedImage(i)}
+                  title="Убрать"
+                >
+                  <svg viewBox="0 0 12 12" fill="none">
+                    <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
+                <span className="chat-input__preview-name">{attachedImages[i]?.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="chat-input" onClick={() => textareaRef.current?.focus()}>
           {/* Кнопка очистки ввода — перед текстом */}
           {inputText.length > 0 && (
@@ -576,9 +680,10 @@ export function ChatPanel() {
             value={inputText}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={
               selectedProjectId
-                ? 'Напишите задачу... (Ctrl+Space — зажми и говори)'
+                ? 'Напишите задачу... (Ctrl+V — вставить скриншот)'
                 : 'Выберите проект чтобы начать'
             }
             rows={1}
@@ -586,6 +691,32 @@ export function ChatPanel() {
             maxLength={10000}
             aria-label="Поле ввода задачи"
           />
+          {/* Кнопка прикрепления файла (📎) */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,.pdf,.xlsx,.xls,.csv,.docx,.doc,.pptx"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              if (e.target.files) {
+                attachImages(Array.from(e.target.files))
+              }
+              e.target.value = ''
+            }}
+          />
+          <button
+            className="chat-input__attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!selectedProjectId || sendingMessage}
+            aria-label="Прикрепить файл"
+            title="Прикрепить файл (изображение, PDF, Excel)"
+          >
+            <svg viewBox="0 0 20 20" fill="none">
+              <path d="M17.5 9.5l-7.8 7.8a4.2 4.2 0 01-6-6L11.5 3.5a2.8 2.8 0 014 4l-7.8 7.8a1.4 1.4 0 01-2-2l7-7"
+                stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
           {/* Кнопка голосового ввода */}
           {voice.isSupported && (
             <button
