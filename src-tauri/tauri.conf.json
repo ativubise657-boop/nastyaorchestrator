@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Nastya Orchestrator",
-  "version": "15.0.0",
+  "version": "16.0.0",
   "identifier": "com.nastyaorc.app",
   "build": {
     "beforeDevCommand": "npm --prefix frontend run dev",
