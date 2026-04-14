@@ -11,6 +11,7 @@ import json
 import logging
 import mimetypes
 import os
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -26,18 +27,28 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_INLINE_BYTES = 20 * 1024 * 1024  # 20 МБ
 
 
-def _get_gemini_api_key() -> str:
-    """Получить Gemini API key из remote-config.json или env."""
-    # Сначала из env
+async def _get_gemini_api_key(backend_url: str = "http://127.0.0.1:8781") -> str:
+    """Получить Gemini API key: env → backend remote-config API → локальный файл."""
+    # 1. Из env
     key = os.environ.get("GEMINI_API_KEY", "")
     if key:
         return key
-    # Из remote-config.json рядом с проектом
+    # 2. Из backend (где remote-config загружен с GitHub при старте)
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{backend_url}/api/system/remote-config")
+            if r.status_code == 200:
+                key = r.json().get("gemini_api_key", "")
+                if key:
+                    return key
+    except Exception as exc:
+        logger.warning("Не удалось получить gemini_api_key от backend: %s", exc)
+    # 3. Fallback: локальный remote-config.json (dev-режим)
     for candidate in [
         Path(__file__).resolve().parent.parent / "remote-config.json",
-        Path(os.environ.get("APPDATA", "")) / "Nastya Orchestrator" / "remote-config.json",
+        Path(getattr(sys, "_MEIPASS", "")) / "remote-config.json" if getattr(sys, "frozen", False) else None,
     ]:
-        if candidate.is_file():
+        if candidate and candidate.is_file():
             try:
                 data = json.loads(candidate.read_text(encoding="utf-8"))
                 key = data.get("gemini_api_key", "")
@@ -119,12 +130,14 @@ class GeminiExecutor(CodexExecutor):
         completed_tasks: list[dict] | None = None,
         on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
-        api_key = _get_gemini_api_key()
+        # Backend URL из env (worker всегда знает свой сервер)
+        backend_url = os.environ.get("ORCH_SERVER_URL", "http://127.0.0.1:8781")
+        api_key = await _get_gemini_api_key(backend_url)
         if not api_key:
             return {
                 "status": "failed",
                 "result": "",
-                "error": "GEMINI_API_KEY не настроен. Добавь ключ в remote-config.json или env.",
+                "error": "GEMINI_API_KEY не найден (ни в env, ни в remote-config, ни в backend).",
             }
 
         self._cancelled = False

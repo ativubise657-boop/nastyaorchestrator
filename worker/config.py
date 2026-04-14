@@ -13,6 +13,10 @@ _DEFAULT_SERVER_URL = (
 # Общий дефолт-токен для backend и worker во frozen-режиме (Tauri sidecar).
 # Backend использует тот же дефолт через backend/core/config.py.
 _DEFAULT_TOKEN = "nastya-local-dev" if getattr(sys, "frozen", False) else "change-me"
+# Во frozen-режиме (Tauri sidecar) системный `codex` не доступен из subprocess
+# (WindowsApps sandbox). Используем вложенный wrapper tools\codex-npx.cmd,
+# который резолвится через _MEIPASS в executor._build_command().
+_DEFAULT_CODEX = r"tools\codex-npx.cmd" if getattr(sys, "frozen", False) else "codex"
 
 
 class WorkerConfig:
@@ -20,7 +24,7 @@ class WorkerConfig:
 
     server_url: str = os.getenv("ORCH_SERVER_URL", _DEFAULT_SERVER_URL)
     worker_token: str = os.getenv("WORKER_TOKEN", _DEFAULT_TOKEN)
-    codex_binary: str = os.getenv("CODEX_BINARY", os.getenv("CLAUDE_BINARY", "codex"))
+    codex_binary: str = os.getenv("CODEX_BINARY", os.getenv("CLAUDE_BINARY", _DEFAULT_CODEX))
     aitunnel_api_key: str = os.getenv("AITUNNEL_API_KEY", "")
     aitunnel_base_url: str = os.getenv("AITUNNEL_BASE_URL", "https://api.aitunnel.ru/v1")
     aitunnel_request_timeout: int = int(os.getenv("AITUNNEL_REQUEST_TIMEOUT", "120"))
