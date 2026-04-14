@@ -115,6 +115,8 @@ class AITunnelExecutor(CodexExecutor):
         except Exception as exc:
             logger.warning("Не удалось получить CRM контекст для AI Tunnel: %s", exc)
 
+        workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
+
         context_prompt = await self._build_context_prompt(
             prompt,
             chat_history,
@@ -124,20 +126,28 @@ class AITunnelExecutor(CodexExecutor):
             crm_context,
             doc_folders,
             completed_tasks,
+            workspace=workspace,
         )
         full_prompt = self._build_prompt(context_prompt, mode)
         user_prompt = self._strip_embedded_system_prompt(full_prompt)
 
-        workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
         image_paths = self._extract_image_paths(documents)
         self._tool_runner = AITunnelToolRunner(workspace)
 
+        # AGENTS.md из workspace → в system message (стиль, шорткаты, правила).
+        # SYSTEM_PROMPT остаётся базовым, AGENTS.md его расширяет.
+        agents_md = self._load_agents_md(workspace)
+        system_parts = [self.SYSTEM_PROMPT, self.TOOL_PROMPT, f"Рабочая директория: {workspace}"]
+        if agents_md:
+            system_parts.append(
+                f"\n--- Инструкции ассистента (AGENTS.md) ---\n{agents_md}\n--- Конец инструкций ---"
+            )
         model_id = get_model_id(model)
         tools = get_tool_definitions()
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
-                "content": f"{self.SYSTEM_PROMPT}\n\n{self.TOOL_PROMPT}\nРабочая директория: {workspace}",
+                "content": "\n\n".join(system_parts),
             },
             {
                 "role": "user",

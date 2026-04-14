@@ -157,7 +157,10 @@ class GeminiExecutor(CodexExecutor):
 
         self._cancelled = False
 
-        # Строим контекст как для остальных executor-ов
+        workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
+
+        # Строим контекст как для остальных executor-ов.
+        # workspace → _build_context_prompt подмешает AGENTS.md из vault.
         context_prompt = await self._build_context_prompt(
             prompt,
             chat_history,
@@ -167,6 +170,7 @@ class GeminiExecutor(CodexExecutor):
             None,  # crm_context
             doc_folders,
             completed_tasks,
+            workspace=workspace,
         )
         full_prompt = self._build_prompt(context_prompt, mode)
 

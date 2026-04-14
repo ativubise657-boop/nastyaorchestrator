@@ -41,34 +41,39 @@ class StreamEvent:
 class CodexExecutor:
     """Thin runtime wrapper around `codex exec --json`."""
 
+    # Минимальный системный промпт — общие правила для всех моделей.
+    # Всё остальное (стиль, шорткаты, правила работы с vault) — в AGENTS.md
+    # в корне workspace проекта. Он подгружается автоматически (_load_agents_md).
     SYSTEM_PROMPT = (
-        "Ты — ассистент Насти Тархановой. Отвечай на русском.\n\n"
-        "СТИЛЬ ОБЩЕНИЯ:\n"
-        "- Обязательно обращайся по имени «Настя» в каждом ответе.\n"
-        "- Тон полуделовой, дружелюбный, без панибратства.\n"
-        "- Коротко и по делу, но не сухо.\n"
-        "- Не начинай ответы с «Конечно», «Отлично», «Безусловно».\n"
-        "- Если не уверен, скажи об этом честно.\n\n"
-        "КОНТЕКСТ:\n"
-        "- Настя — менеджер проектов в Geniled.\n"
-        "- Она не программист: объясняй простым языком, без лишнего жаргона.\n"
-        "- Учитывай историю разговора и не переспрашивай то, что уже известно.\n\n"
-        "ДОКУМЕНТЫ:\n"
-        "- Загруженные документы принадлежат Насте и доступны ей полностью.\n"
-        "- Если Настя просит вывести документ целиком, не сокращай его.\n"
-        "- Когда в контексте есть путь к файлу, прочитай его полностью перед ответом.\n\n"
-        "СОЗДАНИЕ ДОКУМЕНТОВ:\n"
-        "- Если нужен структурированный файл-результат, оформи его так:\n"
+        "Ты — ассистент Насти. Отвечай на русском, обращайся к Насте по имени.\n"
+        "Если не уверен — скажи честно, не выдумывай.\n"
+        "Не начинай ответы с «Конечно», «Отлично», «Безусловно».\n\n"
+        "СОЗДАНИЕ ФАЙЛА-РЕЗУЛЬТАТА:\n"
+        "Если Настя просит оформить результат как документ, используй:\n"
         "  :::document:имя_файла.md\n"
         "  содержимое markdown\n"
         "  :::\n"
-        "- Для папки используй формат:\n"
-        "  :::document:имя_файла.md:Имя папки\n"
-        "  содержимое\n"
-        "  :::\n"
-        "- После блока документа коротко напиши, что создала.\n"
-        "- Не создавай документ без запроса на файл-результат."
+        "Для папки: :::document:имя_файла.md:Имя папки\n"
+        "После блока коротко скажи, что создала. Без запроса файл не создавай."
     )
+
+    # Максимум байт AGENTS.md для подмешивания в промпт (защита от гигантских файлов)
+    _AGENTS_MD_MAX_BYTES = 32 * 1024
+
+    @classmethod
+    def _load_agents_md(cls, workspace: str) -> str | None:
+        """Читает AGENTS.md из корня workspace. Возвращает None если нет/ошибка."""
+        if not workspace:
+            return None
+        path = Path(workspace) / "AGENTS.md"
+        if not path.is_file():
+            return None
+        try:
+            data = path.read_bytes()[: cls._AGENTS_MD_MAX_BYTES]
+            return data.decode("utf-8", errors="replace").strip() or None
+        except OSError as exc:
+            logger.warning("Не удалось прочитать AGENTS.md: %s", exc)
+            return None
 
     def __init__(self, codex_binary: str = "codex", task_timeout: int = 600):
         # При frozen (PyInstaller onefile) относительные пути нужно резолвить
@@ -210,8 +215,20 @@ class CodexExecutor:
         crm_context: str | None = None,
         doc_folders: list[str] | None = None,
         completed_tasks: list[dict] | None = None,
+        workspace: str | None = None,
     ) -> str:
         parts: list[str] = [self.SYSTEM_PROMPT]
+
+        # AGENTS.md из workspace — основной источник персоны, шорткатов и правил.
+        # Единый для всех моделей (Codex / AI Tunnel / Gemini).
+        if workspace:
+            agents = self._load_agents_md(workspace)
+            if agents:
+                parts.append(
+                    "\n--- Инструкции ассистента (AGENTS.md) ---\n"
+                    f"{agents}\n"
+                    "--- Конец инструкций ---"
+                )
 
         if project:
             name = project.get("name", "")
@@ -397,6 +414,8 @@ class CodexExecutor:
         except (httpx.HTTPError, httpx.TimeoutException, OSError) as exc:
             logger.warning("Не удалось получить CRM контекст: %s", exc)
 
+        workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
+
         context_prompt = await self._build_context_prompt(
             prompt,
             chat_history,
@@ -406,10 +425,10 @@ class CodexExecutor:
             crm_context,
             doc_folders,
             completed_tasks,
+            workspace=workspace,
         )
         full_prompt = self._build_prompt(context_prompt, mode)
 
-        workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
         image_paths = self._extract_image_paths(documents)
         add_dirs = self._collect_additional_dirs(
             workspace=workspace,
