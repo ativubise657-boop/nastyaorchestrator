@@ -23,6 +23,7 @@
         "fullscreen": false,
         "visible": true,
         "decorations": true,
+        "dragDropEnabled": false,
         "url": "http://127.0.0.1:8781"
       }
     ],
