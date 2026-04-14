@@ -187,6 +187,17 @@ class State:
                 conn.commit()
             except sqlite3.OperationalError:
                 pass
+        # 4. attachment_document_ids в tasks (JSON list id прикреплённых документов).
+        # Нужно чтобы /queue/next понимал "вот эти файлы уже приложены к сообщению"
+        # и автоматически помечал их requested=true (даже если в тексте нет триггеров).
+        try:
+            conn.execute("SELECT attachment_document_ids FROM tasks LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN attachment_document_ids TEXT DEFAULT ''")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
 
         conn.executescript(self._SCHEMA)
         conn.commit()

@@ -7,6 +7,7 @@
   - complete() — пометить задачу completed/failed + записать результат
   - size()     — сколько задач ждёт выполнения
 """
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -35,19 +36,23 @@ class TaskQueue:
         mode: str = "auto",
         model: str = "gpt-5.4",
         task_id: str | None = None,
+        attachment_document_ids: list[str] | None = None,
     ) -> str:
         """
         Создаёт запись задачи со статусом queued.
+        attachment_document_ids — файлы явно приложенные к сообщению; они
+        автоматически станут requested=true при выдаче задачи worker-у.
         Возвращает id новой задачи.
         """
         tid = task_id or str(uuid.uuid4())
         now = _now_iso()
+        atts_json = json.dumps(attachment_document_ids) if attachment_document_ids else ""
         self._state.execute(
             """
-            INSERT INTO tasks (id, project_id, prompt, mode, model, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'queued', ?)
+            INSERT INTO tasks (id, project_id, prompt, mode, model, status, attachment_document_ids, created_at)
+            VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
             """,
-            (tid, project_id, prompt, mode, model, now),
+            (tid, project_id, prompt, mode, model, atts_json, now),
         )
         self._state.commit()
         logger.info("Задача %s добавлена в очередь (проект %s, режим %s)", tid, project_id, mode)

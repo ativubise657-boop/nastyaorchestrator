@@ -66,12 +66,16 @@ async def send_message(body: ChatSendRequest, request: Request):
         (message_id, body.project_id, body.message, attachments_json, now),
     )
 
-    # Создаём задачу и ставим в очередь
+    # Создаём задачу и ставим в очередь.
+    # attachment_document_ids — чтобы /queue/next пометил эти файлы requested=true
+    # автоматически (они явно приложены Настей к этому сообщению).
+    attachment_doc_ids = [a.document_id for a in body.attachments if a.document_id]
     task_id = queue.enqueue(
         project_id=body.project_id,
         prompt=body.message,
         mode=body.mode,
         model=body.model,
+        attachment_document_ids=attachment_doc_ids or None,
     )
 
     # Привязываем сообщение к задаче

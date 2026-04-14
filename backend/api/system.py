@@ -366,10 +366,23 @@ async def queue_next(request: Request):
                 for r in all_rows
             ]
 
+    # Документы, явно приложенные к этому сообщению — автоматически requested.
+    # Читаются из tasks.attachment_document_ids (записано в chat.py при /send).
+    attached_ids: set[str] = set()
+    try:
+        raw_att = task.get("attachment_document_ids") or ""
+        if raw_att:
+            import json as _json
+            parsed = _json.loads(raw_att)
+            if isinstance(parsed, list):
+                attached_ids = {str(x) for x in parsed if x}
+    except (ValueError, TypeError):
+        attached_ids = set()
+
     # Документы проекта — нумерованный список
     # Содержимое включаем ТОЛЬКО для конкретного запрошенного документа
     doc_rows = state.fetchall(
-        "SELECT filename, path, size, content_type FROM documents WHERE project_id = ? ORDER BY created_at DESC LIMIT 50",
+        "SELECT id, filename, path, size, content_type FROM documents WHERE project_id = ? ORDER BY created_at DESC LIMIT 50",
         (project_id,),
     )
     if doc_rows:
@@ -418,8 +431,11 @@ async def queue_next(request: Request):
                 "content_type": d["content_type"],
             }
 
-            # Подгружаем содержимое ТОЛЬКО для запрошенного документа
-            is_target = (target_num == doc_num)
+            # Документ считается запрошенным если:
+            # 1) явно приложен к сообщению (attachment_document_ids)
+            # 2) ИЛИ упомянут в промпте по #номер/имени/ключевым словам
+            is_attached = str(d["id"]) in attached_ids
+            is_target = is_attached or (target_num == doc_num)
             fname_lower = d["filename"].lower()
             is_image = any(fname_lower.endswith(ext) for ext in
                           (".png", ".jpg", ".jpeg", ".gif", ".webp"))
