@@ -1,6 +1,6 @@
 [package]
 name = "nastya-orchestrator"
-version = "21.0.0"
+version = "22.0.0"
 description = "Nastya Orchestrator desktop shell"
 authors = ["nastyaorc"]
 edition = "2021"
