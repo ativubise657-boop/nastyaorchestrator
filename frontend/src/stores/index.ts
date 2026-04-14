@@ -20,41 +20,39 @@ export interface CreateProjectData {
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-export type ChatModel = 'glm-4.7-flash' | 'glm-5-turbo' | 'gpt-5.4-nano' | 'gpt-5.4' | 'gpt-5.3-codex' | 'gemini-2.5-flash'
+export type ChatModel = 'gpt-5.4' | 'gpt-5.3-codex'
 
 // Дефолт модели — gpt-5.4 (codex CLI через opera-proxy → OpenAI).
 // Был glm-5-turbo (aitunnel) — переключили потому что Дима хочет codex.
 const DEFAULT_CHAT_MODEL: ChatModel = 'gpt-5.4'
 
+// Любое legacy значение (glm/gemini/nano/…) нормализуется в одну из двух моделей.
+// Reasoning — для задач где нужна глубина, GPT 5 — для всего остального.
 const LEGACY_MODEL_ALIASES: Record<string, ChatModel> = {
-  glm: 'glm-5-turbo',
-  haiku: 'glm-4.7-flash',
-  sonnet: 'glm-5-turbo',
-  opus: 'gpt-5.3-codex',
-  mini: 'glm-4.7-flash',
-  nano: 'gpt-5.4-nano',
   gpt5: 'gpt-5.4',
   'gpt5-thinking': 'gpt-5.3-codex',
-  gemini: 'gemini-2.5-flash',
-  'gemini-flash': 'gemini-2.5-flash',
+  'gpt5-reasoning': 'gpt-5.3-codex',
+  opus: 'gpt-5.3-codex',
+  thinking: 'gpt-5.3-codex',
+  reasoning: 'gpt-5.3-codex',
   default: DEFAULT_CHAT_MODEL,
   max: DEFAULT_CHAT_MODEL,
-  'gpt-5.4-mini': 'glm-4.7-flash',
-  'gpt-5.4': 'gpt-5.4',
-  'gpt-5.3-codex': 'gpt-5.3-codex',
-  'gemini-2.5-flash': 'gemini-2.5-flash',
+  // снятые модели маппим на GPT 5 (дефолт)
+  'glm-4.7-flash': 'gpt-5.4',
+  'glm-5-turbo': 'gpt-5.4',
+  'gpt-5.4-nano': 'gpt-5.4',
+  'gemini-2.5-flash': 'gpt-5.4',
+  glm: 'gpt-5.4',
+  gemini: 'gpt-5.4',
+  haiku: 'gpt-5.4',
+  sonnet: 'gpt-5.4',
+  nano: 'gpt-5.4',
+  mini: 'gpt-5.4',
 }
 
 function normalizeChatModel(model?: string | null): ChatModel {
   if (!model) return DEFAULT_CHAT_MODEL
-  if (
-    model === 'glm-4.7-flash' ||
-    model === 'glm-5-turbo' ||
-    model === 'gpt-5.4-nano' ||
-    model === 'gpt-5.4' ||
-    model === 'gpt-5.3-codex' ||
-    model === 'gemini-2.5-flash'
-  ) {
+  if (model === 'gpt-5.4' || model === 'gpt-5.3-codex') {
     return model
   }
   return LEGACY_MODEL_ALIASES[model] ?? DEFAULT_CHAT_MODEL

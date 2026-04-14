@@ -30,8 +30,10 @@ logger = logging.getLogger(__name__)
 
 # Таймаут запроса к очереди (секунды)
 _QUEUE_HTTP_TIMEOUT = 15
-_AITUNNEL_MODELS = {"glm-4.7-flash", "glm-5-turbo", "gpt-5.4-nano"}
-_GEMINI_MODELS = {"gemini-2.5-flash"}
+# Оставлены только Codex модели (gpt-5.4, gpt-5.3-codex).
+# AITunnel/Gemini можно вернуть если добавится новая модель — архитектурно поддержка есть.
+_AITUNNEL_MODELS: set[str] = set()
+_GEMINI_MODELS: set[str] = set()
 
 
 def _is_aitunnel_model(model: str) -> bool:

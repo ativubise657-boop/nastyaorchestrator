@@ -169,9 +169,6 @@ function TypingIndicator() {
 // ===== Одно сообщение — full-width строка =====
 // CSS-фильтры аватарки Codex по модели
 const AVATAR_FILTERS: Record<string, string> = {
-  'glm-5-turbo': 'none',
-  'glm-4.7-flash': 'hue-rotate(38deg) saturate(1.35)',
-  'gpt-5.4-nano': 'hue-rotate(205deg) saturate(1.2) brightness(0.95)',
   'gpt-5.4': 'hue-rotate(155deg) saturate(1.2) brightness(1.02)',
   'gpt-5.3-codex': 'hue-rotate(290deg) saturate(1.35) brightness(0.98)',
 }
@@ -205,7 +202,7 @@ function Message({ message, msgNumber, onRefClick }: {
         ) : (
           <img
             src="/avatar-claude.png"
-            alt="Codex"
+            alt="Ассистент"
             className="message__avatar-img"
             style={{ filter: AVATAR_FILTERS[selectedModel] ?? 'none' }}
           />
@@ -215,7 +212,7 @@ function Message({ message, msgNumber, onRefClick }: {
       <div className="message__body">
         {/* Имя + время */}
         <div className="message__header">
-          <span className="message__name">{isUser ? 'Настя' : 'Codex'}</span>
+          <span className="message__name">{isUser ? 'Настя' : 'Ассистент'}</span>
           <span className="message__time">{formatTime(message.created_at)}</span>
           {task && !isUser && <TaskStatusBadge status={task.status} />}
         </div>
@@ -288,9 +285,6 @@ function formatTime(iso: string): string {
 
 // ===== Оценка времени ответа по модели =====
 const ESTIMATE_SECONDS: Record<string, number> = {
-  'glm-4.7-flash': 8,
-  'glm-5-turbo': 18,
-  'gpt-5.4-nano': 12,
   'gpt-5.4': 16,
   'gpt-5.3-codex': 36,
 }
@@ -371,8 +365,6 @@ export function ChatPanel() {
   const [attachedImages, setAttachedImages] = useState<File[]>([])
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
-  // Модель до автосвитча — для восстановления после отправки
-  const modelBeforeAutoSwitch = useRef<ChatModel | null>(null)
 
   // Добавить файлы в очередь на отправку
   const attachImages = useCallback((files: File[]) => {
@@ -381,26 +373,12 @@ export function ChatPanel() {
     // Генерируем превью: для изображений — URL, для остальных — пустая строка
     const urls = files.map(f => f.type.startsWith('image/') ? URL.createObjectURL(f) : '')
     setImagePreviews(prev => [...prev, ...urls])
-    // Автопереключение на Gemini Flash при прикреплении не-изображений
-    const hasDocuments = files.some(f => !f.type.startsWith('image/'))
-    if (hasDocuments) {
-      const currentModel = useStore.getState().selectedModel
-      if (currentModel !== 'gemini-2.5-flash') {
-        modelBeforeAutoSwitch.current = currentModel
-        useStore.getState().setSelectedModel('gemini-2.5-flash')
-      }
-    }
   }, [])
 
   // Удалить прикреплённый файл по индексу
   const removeAttachedImage = useCallback((index: number) => {
     setAttachedImages(prev => {
       const next = prev.filter((_, i) => i !== index)
-      // Если убрали все документы — вернуть модель
-      if (next.length === 0 && modelBeforeAutoSwitch.current) {
-        useStore.getState().setSelectedModel(modelBeforeAutoSwitch.current)
-        modelBeforeAutoSwitch.current = null
-      }
       return next
     })
     setImagePreviews(prev => {
@@ -573,11 +551,6 @@ export function ChatPanel() {
       imagePreviews.forEach(u => { if (u) URL.revokeObjectURL(u) })
       setAttachedImages([])
       setImagePreviews([])
-      // Вернуть модель если был автосвитч
-      if (modelBeforeAutoSwitch.current) {
-        useStore.getState().setSelectedModel(modelBeforeAutoSwitch.current)
-        modelBeforeAutoSwitch.current = null
-      }
     }
 
     await handleSend(text, undefined, sentAttachments.length ? sentAttachments : undefined)
@@ -901,14 +874,11 @@ export function ChatPanel() {
   )
 }
 
-// Переключатель модели
+// Переключатель модели — оставлены только GPT 5 и GPT 5 Reasoning (Codex).
+// Этого достаточно Насте: tools + vision + reasoning покрывают все её задачи.
 const MODEL_OPTIONS: Array<{ id: ChatModel; label: string }> = [
-  { id: 'glm-4.7-flash', label: 'GLM 4.7 Flash' },
-  { id: 'glm-5-turbo', label: 'GLM 5 Turbo' },
-  { id: 'gpt-5.4-nano', label: 'GPT 5.4 Nano' },
   { id: 'gpt-5.4', label: 'GPT 5' },
-  { id: 'gpt-5.3-codex', label: 'GPT 5 Thinking' },
-  { id: 'gemini-2.5-flash', label: 'Gemini Flash' },
+  { id: 'gpt-5.3-codex', label: 'GPT 5 Reasoning' },
 ]
 
 function ModelSelector({ selected }: { selected: ChatModel }) {
