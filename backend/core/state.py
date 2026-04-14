@@ -32,17 +32,18 @@ class State:
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
-        id           TEXT PRIMARY KEY,
-        project_id   TEXT NOT NULL,
-        prompt       TEXT NOT NULL,
-        mode         TEXT DEFAULT 'auto',
-        model        TEXT DEFAULT 'gpt-5.4',
-        status       TEXT DEFAULT 'queued',
-        result       TEXT,
-        error        TEXT,
-        created_at   TEXT NOT NULL,
-        started_at   TEXT,
-        completed_at TEXT,
+        id                      TEXT PRIMARY KEY,
+        project_id              TEXT NOT NULL,
+        prompt                  TEXT NOT NULL,
+        mode                    TEXT DEFAULT 'auto',
+        model                   TEXT DEFAULT 'gpt-5.4',
+        status                  TEXT DEFAULT 'queued',
+        result                  TEXT,
+        error                   TEXT,
+        attachment_document_ids TEXT DEFAULT '',
+        created_at              TEXT NOT NULL,
+        started_at              TEXT,
+        completed_at            TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id)
     );
 
