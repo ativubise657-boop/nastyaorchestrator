@@ -1,7 +1,7 @@
 {
-  "version": 2,
-  "updated_at": "2026-04-13T09:30:00Z",
+  "version": 3,
+  "updated_at": "2026-04-14T06:00:00Z",
   "header_emoji": "🚀",
-  "notes": "v2: добавлен gemini_api_key для PDF парсинга через Gemini 2.5 Flash",
-  "gemini_api_key": "AIzaSyDs8iJREm89WvYPaqbPqleqM7I1LZV2eIc"
+  "notes": "v3: ротация gemini_api_key (предыдущий утёк через публичный репо)",
+  "gemini_api_key": "AIzaSyC1D7KEGL-oAVRaJQR3K-67NVxyjrFd5Ow"
 }
