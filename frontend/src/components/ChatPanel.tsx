@@ -235,10 +235,44 @@ function Message({ message, msgNumber, onRefClick }: {
           {message.streaming && message.content && (
             <span className="message__stream-cursor" aria-hidden="true" />
           )}
+          {/* Прикреплённые файлы (PDF, изображения, XLSX, DOCX) */}
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="message__attachments">
+              {message.attachments.map((att, i) => (
+                <div key={`${att.filename}-${i}`} className="message__attachment" title={att.filename}>
+                  <span className="message__attachment-icon">{attachmentIcon(att.content_type, att.filename)}</span>
+                  <span className="message__attachment-name">{att.filename}</span>
+                  {att.size ? (
+                    <span className="message__attachment-size">{formatSize(att.size)}</span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
   )
+}
+
+// Иконка по типу файла
+function attachmentIcon(contentType?: string, filename?: string): string {
+  const ct = (contentType || '').toLowerCase()
+  const ext = (filename || '').toLowerCase().split('.').pop() || ''
+  if (ct.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return '🖼️'
+  if (ct === 'application/pdf' || ext === 'pdf') return '📕'
+  if (['xlsx', 'xls', 'csv'].includes(ext) || ct.includes('spreadsheet') || ct.includes('excel')) return '📊'
+  if (['docx', 'doc'].includes(ext) || ct.includes('word')) return '📝'
+  if (['pptx', 'ppt'].includes(ext) || ct.includes('presentation')) return '📑'
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return '🗜️'
+  if (['txt', 'md', 'log', 'json', 'xml', 'yaml', 'yml'].includes(ext)) return '📄'
+  return '📎'
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`
 }
 
 function formatTime(iso: string): string {
@@ -500,15 +534,30 @@ export function ChatPanel() {
     }
     setAutoScroll(true)
 
-    // Загрузить прикреплённые изображения как документы проекта (перед отправкой сообщения)
+    // Загрузить прикреплённые файлы как документы проекта (перед отправкой)
+    // и собрать метаданные для отображения в bubble сообщения
+    const sentAttachments: Array<{ filename: string; size: number; content_type: string; document_id?: string }> = []
     if (attachedImages.length > 0 && selectedProjectId) {
       for (const file of attachedImages) {
         try {
           const formData = new FormData()
           formData.append('file', file)
-          await fetch(`/api/documents/${selectedProjectId}/upload`, {
+          const resp = await fetch(`/api/documents/${selectedProjectId}/upload`, {
             method: 'POST',
             body: formData,
+          })
+          let docId: string | undefined
+          if (resp.ok) {
+            try {
+              const data = await resp.json()
+              docId = data?.id
+            } catch { /* ignore */ }
+          }
+          sentAttachments.push({
+            filename: file.name,
+            size: file.size,
+            content_type: file.type || '',
+            document_id: docId,
           })
         } catch (err) {
           console.warn('Ошибка загрузки вложения:', err)
@@ -527,7 +576,7 @@ export function ChatPanel() {
       }
     }
 
-    await handleSend(text)
+    await handleSend(text, undefined, sentAttachments.length ? sentAttachments : undefined)
     // Вернуть фокус в textarea
     textareaRef.current?.focus()
     // Принудительный скролл после отправки

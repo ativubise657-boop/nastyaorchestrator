@@ -1107,6 +1107,46 @@
   text-overflow: ellipsis;
 }
 
+/* Прикреплённые файлы внутри bubble сообщения */
+.message__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.message__attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #c9c9d4);
+  max-width: 100%;
+}
+
+.message__attachment-icon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.message__attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.message__attachment-size {
+  color: var(--text-muted, #7a7a88);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
 /* Превью для не-изображений (PDF, XLSX, DOCX) */
 .chat-input__preview-file {
   width: 100%;

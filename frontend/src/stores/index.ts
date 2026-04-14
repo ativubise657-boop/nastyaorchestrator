@@ -60,11 +60,19 @@ function normalizeChatModel(model?: string | null): ChatModel {
   return LEGACY_MODEL_ALIASES[model] ?? DEFAULT_CHAT_MODEL
 }
 
+export interface ChatAttachment {
+  filename: string
+  size?: number
+  content_type?: string
+  document_id?: string | null
+}
+
 export interface ChatMessage {
   id: string
   role: MessageRole
   content: string
   task_id: string | null
+  attachments?: ChatAttachment[]
   created_at: string
   // Временные поля для стриминга (только в UI, не из API)
   streaming?: boolean
@@ -164,7 +172,7 @@ interface AppStore {
   messagesLoading: boolean
   sendingMessage: boolean
   loadHistory: (projectId: string) => Promise<void>
-  sendMessage: (message: string, modelOverride?: string) => Promise<void>
+  sendMessage: (message: string, modelOverride?: string, attachments?: ChatAttachment[]) => Promise<void>
   clearMessages: () => void
   addMessage: (message: ChatMessage) => void
   updateMessageContent: (id: string, content: string) => void
@@ -418,17 +426,20 @@ export const useStore = create<AppStore>((set, get) => ({
     }
   },
 
-  sendMessage: async (message, modelOverride?) => {
+  sendMessage: async (message, modelOverride?, attachments?) => {
     const { selectedProjectId, selectedModel } = get()
     const model = normalizeChatModel(modelOverride || selectedModel)
     if (!selectedProjectId) return
 
-    // Оптимистично добавляем сообщение пользователя
+    const atts = attachments || []
+
+    // Оптимистично добавляем сообщение пользователя (с attachments)
     const tempUserMsg: ChatMessage = {
       id: `temp-${Date.now()}`,
       role: 'user',
       content: message,
       task_id: null,
+      attachments: atts,
       created_at: new Date().toISOString(),
     }
     set((state) => ({
@@ -441,7 +452,7 @@ export const useStore = create<AppStore>((set, get) => ({
         '/api/chat/send',
         {
           method: 'POST',
-          body: JSON.stringify({ project_id: selectedProjectId, message, model }),
+          body: JSON.stringify({ project_id: selectedProjectId, message, model, attachments: atts }),
         },
       )
 

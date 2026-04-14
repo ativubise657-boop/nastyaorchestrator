@@ -2,6 +2,7 @@
 Чат-роутер: приём сообщений от пользователя, запись в очередь задач,
 отдача истории и статуса задачи.
 """
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from backend.models import (
+    ChatAttachment,
     ChatMessage,
     ChatSendRequest,
     ChatSendResponse,
@@ -53,12 +55,15 @@ async def send_message(body: ChatSendRequest, request: Request):
 
     # Создаём сообщение пользователя
     message_id = str(uuid.uuid4())
+    attachments_json = json.dumps(
+        [a.model_dump() for a in body.attachments], ensure_ascii=False
+    ) if body.attachments else ""
     state.execute(
         """
-        INSERT INTO chat_messages (id, project_id, role, content, task_id, created_at)
-        VALUES (?, ?, 'user', ?, NULL, ?)
+        INSERT INTO chat_messages (id, project_id, role, content, task_id, attachments, created_at)
+        VALUES (?, ?, 'user', ?, NULL, ?, ?)
         """,
-        (message_id, body.project_id, body.message, now),
+        (message_id, body.project_id, body.message, attachments_json, now),
     )
 
     # Создаём задачу и ставим в очередь
@@ -138,7 +143,7 @@ async def get_history(project_id: str, request: Request, limit: int = 50):
 
     rows = state.fetchall(
         """
-        SELECT id, project_id, role, content, task_id, created_at
+        SELECT id, project_id, role, content, task_id, attachments, created_at
         FROM chat_messages
         WHERE project_id = ?
         ORDER BY created_at DESC
@@ -146,8 +151,16 @@ async def get_history(project_id: str, request: Request, limit: int = 50):
         """,
         (project_id, limit),
     )
-    # Отдаём в хронологическом порядке
-    messages = [ChatMessage(**dict(r)) for r in reversed(rows)]
+    # Отдаём в хронологическом порядке; парсим attachments JSON в список
+    messages: list[ChatMessage] = []
+    for r in reversed(rows):
+        data = dict(r)
+        raw = data.pop("attachments", "") or ""
+        try:
+            data["attachments"] = json.loads(raw) if raw else []
+        except (ValueError, TypeError):
+            data["attachments"] = []
+        messages.append(ChatMessage(**data))
     return messages
 
 

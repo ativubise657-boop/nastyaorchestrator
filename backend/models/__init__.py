@@ -66,12 +66,21 @@ class Task(BaseModel):
 # Сообщение чата
 # ---------------------------------------------------------------------------
 
+class ChatAttachment(BaseModel):
+    """Прикреплённый к сообщению файл (превью в чате)."""
+    filename: str
+    size: int = 0
+    content_type: str = ""
+    document_id: Optional[str] = None  # id в таблице documents
+
+
 class ChatMessage(BaseModel):
     id: str
     project_id: str
     role: str  # user / assistant / system
     content: str
     task_id: Optional[str] = None
+    attachments: list[ChatAttachment] = []
     created_at: datetime
 
 
@@ -79,7 +88,8 @@ class ChatSendRequest(BaseModel):
     project_id: str
     message: str
     mode: str = "auto"  # auto / ag+ / rev / solo
-    model: str = "gpt-5.4"  # glm-4.7-flash / glm-5-turbo / gpt-5.4-nano / gpt-5.4 / gpt-5.3-codex
+    model: str = "gpt-5.4"  # glm-4.7-flash / glm-5-turbo / gpt-5.4-nano / gpt-5.4 / gpt-5.3-codex / gemini-2.5-flash
+    attachments: list[ChatAttachment] = []
 
 
 class ChatSendResponse(BaseModel):

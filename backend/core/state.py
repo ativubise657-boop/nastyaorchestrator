@@ -47,12 +47,13 @@ class State:
     );
 
     CREATE TABLE IF NOT EXISTS chat_messages (
-        id         TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        role       TEXT NOT NULL,
-        content    TEXT NOT NULL,
-        task_id    TEXT,
-        created_at TEXT NOT NULL
+        id          TEXT PRIMARY KEY,
+        project_id  TEXT NOT NULL,
+        role        TEXT NOT NULL,
+        content     TEXT NOT NULL,
+        task_id     TEXT,
+        attachments TEXT DEFAULT '',
+        created_at  TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS folders (
@@ -177,6 +178,15 @@ class State:
                 conn.commit()
             except sqlite3.OperationalError:
                 pass  # таблица ещё не существует — executescript создаст
+        # 3. attachments в chat_messages (JSON string со списком прикреплённых файлов)
+        try:
+            conn.execute("SELECT attachments FROM chat_messages LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                conn.execute("ALTER TABLE chat_messages ADD COLUMN attachments TEXT DEFAULT ''")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
 
         conn.executescript(self._SCHEMA)
         conn.commit()

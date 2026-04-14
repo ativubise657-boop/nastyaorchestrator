@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react'
-import { useStore } from '../stores'
+import { useStore, type ChatAttachment } from '../stores'
 
 // Хук инкапсулирует логику отправки сообщения и состояние input
 export function useChat() {
@@ -9,10 +9,10 @@ export function useChat() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const handleSend = useCallback(
-    async (text: string, modelOverride?: string) => {
+    async (text: string, modelOverride?: string, attachments?: ChatAttachment[]) => {
       const trimmed = text.trim()
-      if (!trimmed || sendingMessage || !selectedProjectId) return
-      await sendMessage(trimmed, modelOverride)
+      if ((!trimmed && !(attachments && attachments.length)) || sendingMessage || !selectedProjectId) return
+      await sendMessage(trimmed, modelOverride, attachments)
     },
     [sendMessage, sendingMessage, selectedProjectId],
   )
