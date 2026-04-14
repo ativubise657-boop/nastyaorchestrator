@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 DEFAULT_MODEL = "gemini-2.5-flash"
+FALLBACK_MODEL = "gemini-2.0-flash"
+# Retry для временных сбоев Google (перегрузка/rate limit)
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+RETRY_DELAYS = [1, 3, 6]  # секунды между попытками на той же модели
 MAX_INLINE_BYTES = 20 * 1024 * 1024  # 20 МБ
 
 
@@ -170,7 +175,6 @@ class GeminiExecutor(CodexExecutor):
         # Собираем multimodal parts
         parts = self._build_parts(full_prompt, image_paths, documents)
 
-        gemini_model = DEFAULT_MODEL
         body: dict[str, Any] = {
             "contents": [{"parts": parts}],
             "generationConfig": {
@@ -180,45 +184,64 @@ class GeminiExecutor(CodexExecutor):
         }
 
         logger.info(
-            "Запускаем Gemini: model=%s, images=%d, docs=%d, prompt_len=%d",
-            gemini_model,
+            "Запускаем Gemini: images=%d, docs=%d, prompt_len=%d",
             len(image_paths),
             len([d for d in (documents or []) if d.get("requested")]),
             len(full_prompt),
         )
 
-        try:
-            async with httpx.AsyncClient(timeout=120, trust_env=True) as client:
-                r = await client.post(
-                    f"{API_BASE}/{gemini_model}:generateContent",
-                    params={"key": api_key},
-                    json=body,
-                )
+        # Пробуем сначала DEFAULT_MODEL (быстрый retry на 503/429),
+        # при финальном отказе — FALLBACK_MODEL (старая стабильная).
+        last_error = ""
+        for model_name in (DEFAULT_MODEL, FALLBACK_MODEL):
+            for attempt, delay in enumerate([0, *RETRY_DELAYS], start=1):
+                if self._cancelled:
+                    return {"status": "cancelled", "result": "", "error": "Задача отменена"}
+                if delay:
+                    await asyncio.sleep(delay)
+                try:
+                    async with httpx.AsyncClient(timeout=120, trust_env=True) as client:
+                        r = await client.post(
+                            f"{API_BASE}/{model_name}:generateContent",
+                            params={"key": api_key},
+                            json=body,
+                        )
+                except httpx.TimeoutException:
+                    last_error = f"{model_name}: timeout (120s)"
+                    logger.warning(last_error)
+                    continue
+                except Exception as exc:
+                    last_error = f"{model_name}: {exc}"
+                    logger.warning("Gemini сетевая ошибка: %s", exc)
+                    continue
 
-            if r.status_code != 200:
-                error = f"Gemini HTTP {r.status_code}: {r.text[:500]}"
-                logger.error(error)
-                return {"status": "failed", "result": "", "error": error}
+                if r.status_code == 200:
+                    data = r.json()
+                    candidates = data.get("candidates", [])
+                    if not candidates:
+                        feedback = data.get("promptFeedback", {})
+                        last_error = f"{model_name}: пустой ответ {feedback}"
+                        logger.warning(last_error)
+                        break  # пустой ответ — не ретраим, переходим на fallback
+                    text_parts = candidates[0].get("content", {}).get("parts", [])
+                    result = "\n".join(p.get("text", "") for p in text_parts if "text" in p)
+                    if on_chunk and result:
+                        await on_chunk(result)
+                    logger.info("Gemini ответ (%s): %d символов", model_name, len(result))
+                    return {"status": "completed", "result": result, "error": None}
 
-            data = r.json()
-            candidates = data.get("candidates", [])
-            if not candidates:
-                feedback = data.get("promptFeedback", {})
-                error = f"Gemini пустой ответ: {feedback}"
-                logger.warning(error)
-                return {"status": "failed", "result": "", "error": error}
+                if r.status_code in RETRY_STATUSES:
+                    last_error = f"{model_name} HTTP {r.status_code}: {r.text[:200]}"
+                    logger.warning("Gemini %s (попытка %d/%d)", last_error, attempt, len(RETRY_DELAYS) + 1)
+                    continue
 
-            text_parts = candidates[0].get("content", {}).get("parts", [])
-            result = "\n".join(p.get("text", "") for p in text_parts if "text" in p)
+                # Невосстановимая ошибка (401/403/400) — fallback не поможет
+                last_error = f"{model_name} HTTP {r.status_code}: {r.text[:500]}"
+                logger.error(last_error)
+                return {"status": "failed", "result": "", "error": last_error}
 
-            if on_chunk and result:
-                await on_chunk(result)
-
-            logger.info("Gemini ответ: %d символов", len(result))
-            return {"status": "completed", "result": result, "error": None}
-
-        except httpx.TimeoutException:
-            return {"status": "failed", "result": "", "error": "Gemini timeout (120s)"}
-        except Exception as exc:
-            logger.exception("Gemini ошибка")
-            return {"status": "failed", "result": "", "error": str(exc)}
+        return {
+            "status": "failed",
+            "result": "",
+            "error": f"Gemini недоступен после ретраев. {last_error}",
+        }
