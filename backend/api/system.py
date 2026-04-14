@@ -465,6 +465,14 @@ async def queue_next(request: Request):
             docs.append(doc_info)
         task["documents"] = docs
 
+    # Sandbox-режим Codex: прокидываем текущую настройку в задачу
+    # (worker передаст её в `--sandbox <mode>`).
+    try:
+        from backend.api.settings import _load_sandbox
+        task["codex_sandbox"] = _load_sandbox(state)
+    except Exception:
+        task["codex_sandbox"] = "workspace-write"
+
     # Папки документов — передаём имена для контекста создания документов
     folder_rows = state.fetchall(
         "SELECT name FROM folders WHERE project_id = ? ORDER BY name",

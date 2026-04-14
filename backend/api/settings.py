@@ -77,3 +77,41 @@ async def test_proxy(payload: Optional[ProxyPayload] = None, request: Request = 
         settings = _to_settings(payload)
     ok, message = proxy_module.test_proxy(settings)
     return {"ok": ok, "message": message, "settings": settings.to_safe_dict()}
+
+
+# ---------------------------------------------------------------------------
+# Codex sandbox (toggle: workspace-write vs danger-full-access)
+# ---------------------------------------------------------------------------
+
+SANDBOX_VALID = {"workspace-write", "read-only", "danger-full-access"}
+SANDBOX_DEFAULT = "workspace-write"
+
+
+class SandboxPayload(BaseModel):
+    mode: str = Field(..., description="workspace-write | read-only | danger-full-access")
+
+
+def _load_sandbox(state) -> str:
+    row = state.fetchone("SELECT value FROM app_settings WHERE key = 'codex_sandbox'")
+    val = (row["value"] if row else "") or SANDBOX_DEFAULT
+    return val if val in SANDBOX_VALID else SANDBOX_DEFAULT
+
+
+@router.get("/sandbox")
+async def get_sandbox(request: Request):
+    return {"mode": _load_sandbox(request.app.state.db), "choices": sorted(SANDBOX_VALID)}
+
+
+@router.put("/sandbox")
+async def put_sandbox(payload: SandboxPayload, request: Request):
+    if payload.mode not in SANDBOX_VALID:
+        return {"ok": False, "error": f"Неверный режим. Разрешены: {sorted(SANDBOX_VALID)}"}
+    state = request.app.state.db
+    state.execute(
+        "INSERT INTO app_settings (key, value) VALUES ('codex_sandbox', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (payload.mode,),
+    )
+    state.commit()
+    logger.info("Codex sandbox mode → %s", payload.mode)
+    return {"ok": True, "mode": payload.mode}

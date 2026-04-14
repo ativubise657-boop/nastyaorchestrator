@@ -125,13 +125,14 @@ class CodexExecutor:
         workspace: str,
         image_paths: list[str],
         add_dirs: list[str],
+        sandbox: str = "workspace-write",
     ) -> list[str]:
         cmd = [
             self.binary,
             "--ask-for-approval",
             "never",
             "--sandbox",
-            "workspace-write",
+            sandbox or "workspace-write",
             "--cd",
             self._normalize_path_for_cli(workspace),
         ]
@@ -383,6 +384,7 @@ class CodexExecutor:
         doc_folders: list[str] | None = None,
         completed_tasks: list[dict] | None = None,
         documents_dir: str | None = None,
+        codex_sandbox: str | None = None,
         on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         github_context = None
@@ -451,11 +453,13 @@ class CodexExecutor:
             workspace=workspace,
             image_paths=image_paths,
             add_dirs=add_dirs,
+            sandbox=codex_sandbox or "workspace-write",
         )
 
         logger.info(
-            "Запускаем Codex CLI: mode=%s, images=%d, workspace=%s, add_dirs=%s, prompt_len=%d",
+            "Запускаем Codex CLI: mode=%s, sandbox=%s, images=%d, workspace=%s, add_dirs=%s, prompt_len=%d",
             mode,
+            codex_sandbox or "workspace-write",
             len(image_paths),
             workspace,
             add_dirs,

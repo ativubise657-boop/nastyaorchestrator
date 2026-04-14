@@ -18,8 +18,16 @@ const EMPTY: ProxySettings = {
   no_proxy: 'localhost,127.0.0.1,::1',
 }
 
+const SANDBOX_LABELS: Record<string, string> = {
+  'workspace-write': 'Безопасный (только папка проекта + документы)',
+  'read-only': 'Только чтение (без изменений файлов)',
+  'danger-full-access': 'Полный доступ (по всему компьютеру) ⚠',
+}
+
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<ProxySettings>(EMPTY)
+  const [sandbox, setSandbox] = useState<string>('workspace-write')
+  const [sandboxSaving, setSandboxSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -32,7 +40,25 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       .then((data) => setSettings(data))
       .catch(() => {})
       .finally(() => setLoading(false))
+    fetch('/api/settings/sandbox')
+      .then((r) => r.json())
+      .then((data) => data?.mode && setSandbox(data.mode))
+      .catch(() => {})
   }, [])
+
+  const saveSandbox = async (mode: string) => {
+    setSandbox(mode)
+    setSandboxSaving(true)
+    try {
+      await fetch('/api/settings/sandbox', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      })
+    } finally {
+      setSandboxSaving(false)
+    }
+  }
 
   const update = <K extends keyof ProxySettings>(key: K, value: ProxySettings[K]) => {
     setSettings((s) => ({ ...s, [key]: value }))
@@ -171,6 +197,30 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             <div style={{ fontSize: 11, opacity: 0.6, marginTop: 8 }}>
               Изменения применяются мгновенно к новым исходящим запросам backend.
               Worker подхватит при следующем перезапуске.
+            </div>
+
+            {/* Секция: Доступ ассистента к файлам */}
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: 14 }}>Доступ ассистента к файлам</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {Object.entries(SANDBOX_LABELS).map(([value, label]) => (
+                  <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                    <input
+                      type="radio"
+                      name="sandbox"
+                      value={value}
+                      checked={sandbox === value}
+                      onChange={() => saveSandbox(value)}
+                      disabled={sandboxSaving}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.6, marginTop: 6 }}>
+                «Полный доступ» позволит ассистенту искать и менять файлы по всему компьютеру.
+                Используй осознанно — Codex может ошибиться и перезаписать важное.
+              </div>
             </div>
           </div>
         )}
