@@ -74,6 +74,7 @@ class State:
         path         TEXT NOT NULL,
         size         INTEGER NOT NULL,
         content_type TEXT DEFAULT '',
+        is_scratch   INTEGER DEFAULT 0,
         folder_id    TEXT,
         created_at   TEXT NOT NULL,
         FOREIGN KEY (folder_id) REFERENCES folders(id)
@@ -196,6 +197,16 @@ class State:
         except sqlite3.OperationalError:
             try:
                 conn.execute("ALTER TABLE tasks ADD COLUMN attachment_document_ids TEXT DEFAULT ''")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        # 5. is_scratch в documents — одноразовые картинки из буфера/drag&drop.
+        # В списке документов проекта НЕ показываются, удаляются после task.completed.
+        try:
+            conn.execute("SELECT is_scratch FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                conn.execute("ALTER TABLE documents ADD COLUMN is_scratch INTEGER DEFAULT 0")
                 conn.commit()
             except sqlite3.OperationalError:
                 pass

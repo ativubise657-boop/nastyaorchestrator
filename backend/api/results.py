@@ -20,6 +20,47 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _cleanup_scratch_attachments(state, task_row) -> None:
+    """Удаляет scratch-документы, приложенные к завершённой задаче.
+
+    Scratch — это одноразовые картинки из буфера/drag&drop. После того как
+    worker дал ответ, они больше не нужны и не должны захламлять диск и БД.
+    """
+    import json as _json
+    raw = task_row["attachment_document_ids"] if "attachment_document_ids" in task_row.keys() else ""
+    if not raw:
+        return
+    try:
+        doc_ids = _json.loads(raw)
+    except (ValueError, TypeError):
+        return
+    if not doc_ids:
+        return
+
+    for doc_id in doc_ids:
+        row = state.fetchone(
+            "SELECT path, is_scratch FROM documents WHERE id = ?",
+            (str(doc_id),),
+        )
+        if not row or not row["is_scratch"]:
+            continue
+        # Удаляем файл с диска (и сопутствующий .md кеш если есть)
+        try:
+            import os as _os
+            from pathlib import Path as _Path
+            fpath = _Path(row["path"])
+            if fpath.exists():
+                fpath.unlink()
+            md_cache = fpath.with_suffix(fpath.suffix + ".md")
+            if md_cache.exists():
+                md_cache.unlink()
+        except OSError as exc:
+            logger.warning("Не удалось удалить scratch-файл %s: %s", row["path"], exc)
+        # Удаляем запись из БД
+        state.execute("DELETE FROM documents WHERE id = ?", (str(doc_id),))
+    state.commit()
+
+
 # ---------------------------------------------------------------------------
 # POST /api/results
 # ---------------------------------------------------------------------------
@@ -51,6 +92,10 @@ async def submit_result(body: ResultRequest, request: Request):
         result=body.result,
         error=body.error,
     )
+
+    # Удаляем scratch-документы, приложенные к этой задаче (одноразовые
+    # картинки из буфера/drag&drop — после ответа они больше не нужны).
+    _cleanup_scratch_attachments(state, row)
 
     # Добавляем сообщение ассистента в историю чата
     if body.result or body.error:

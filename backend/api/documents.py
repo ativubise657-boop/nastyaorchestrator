@@ -142,11 +142,13 @@ async def list_documents(project_id: str, request: Request):
     state = request.app.state.db
     ensure_project(state, project_id)
 
+    # Фильтруем scratch — это одноразовые картинки из буфера/drag&drop,
+    # не показываем их в списке документов проекта.
     rows = state.fetchall(
         """
         SELECT id, project_id, filename, path, size, content_type, folder_id, created_at
         FROM documents
-        WHERE project_id = ?
+        WHERE project_id = ? AND COALESCE(is_scratch, 0) = 0
         ORDER BY created_at DESC
         """,
         (project_id,),
@@ -164,11 +166,14 @@ async def upload_document(
     request: Request,
     file: UploadFile = File(...),
     folder_id: str | None = None,
+    is_scratch: bool = False,
 ):
     """
     Загружает файл на сервер, сохраняет запись в БД.
     Имя файла сохраняется как есть, конфликты разрешаются добавлением uuid-префикса.
     folder_id — опциональная папка, куда загрузить документ.
+    is_scratch=true — одноразовый файл (картинка из буфера/drag-n-drop),
+    не показывается в списке документов, удаляется после выполнения задачи.
     """
     state = request.app.state.db
     ensure_project(state, project_id)
@@ -216,14 +221,14 @@ async def upload_document(
 
     state.execute(
         """
-        INSERT INTO documents (id, project_id, filename, path, size, content_type, folder_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO documents (id, project_id, filename, path, size, content_type, folder_id, is_scratch, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (doc_id, project_id, original_name, str(file_path), file_size, content_type, folder_id, now),
+        (doc_id, project_id, original_name, str(file_path), file_size, content_type, folder_id, 1 if is_scratch else 0, now),
     )
     state.commit()
 
-    logger.info("Документ %s загружен в проект %s (%d bytes, text=%s, folder=%s)", original_name, project_id, file_size, bool(text_path), folder_id)
+    logger.info("Документ %s загружен в проект %s (%d bytes, text=%s, folder=%s, scratch=%s)", original_name, project_id, file_size, bool(text_path), folder_id, is_scratch)
     return Document(
         id=doc_id,
         project_id=project_id,

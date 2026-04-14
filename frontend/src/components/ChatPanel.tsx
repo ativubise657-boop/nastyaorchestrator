@@ -535,14 +535,18 @@ export function ChatPanel() {
     setAutoScroll(true)
 
     // Загрузить прикреплённые файлы как документы проекта (перед отправкой)
-    // и собрать метаданные для отображения в bubble сообщения
+    // и собрать метаданные для отображения в bubble сообщения.
+    // Картинки (image/*) — scratch: не попадают в постоянный список документов,
+    // удаляются после выполнения задачи. Файлы (PDF/DOCX/XLSX) — постоянные.
     const sentAttachments: Array<{ filename: string; size: number; content_type: string; document_id?: string }> = []
     if (attachedImages.length > 0 && selectedProjectId) {
       for (const file of attachedImages) {
         try {
+          const isScratch = file.type.startsWith('image/')
           const formData = new FormData()
           formData.append('file', file)
-          const resp = await fetch(`/api/documents/${selectedProjectId}/upload`, {
+          const url = `/api/documents/${selectedProjectId}/upload${isScratch ? '?is_scratch=true' : ''}`
+          const resp = await fetch(url, {
             method: 'POST',
             body: formData,
           })
@@ -867,18 +871,6 @@ export function ChatPanel() {
             <span className="cmd-buttons__separator" />
 
             <button
-              className="cmd-btn cmd-btn--lai"
-              onClick={() => {
-                if (selectedProjectId && !sendingMessage) {
-                  handleSend('/lai')
-                }
-              }}
-              disabled={!selectedProjectId || sendingMessage}
-              title="Сохранить уроки + инструкции проекта"
-            >
-              LAI
-            </button>
-            <button
               className="cmd-btn cmd-btn--pre"
               onClick={() => {
                 if (selectedProjectId && !sendingMessage) {
@@ -886,7 +878,7 @@ export function ChatPanel() {
                 }
               }}
               disabled={!selectedProjectId || sendingMessage}
-              title="Скомпоновать чат (сохранить контекст)"
+              title="Сжать чат: сохранить контекст в файл, уменьшить историю"
             >
               ПРЕ
             </button>
@@ -898,21 +890,9 @@ export function ChatPanel() {
                 }
               }}
               disabled={!selectedProjectId || sendingMessage}
-              title="Раскомпоновать чат (восстановить контекст)"
+              title="Восстановить контекст из сохранённого precompact"
             >
               ПОСТ
-            </button>
-            <button
-              className="cmd-btn cmd-btn--rev"
-              onClick={() => {
-                if (selectedProjectId && !sendingMessage) {
-                  handleSend('/rev')
-                }
-              }}
-              disabled={!selectedProjectId || sendingMessage}
-              title="Анализ изменений + рекомендация ревью"
-            >
-              REV
             </button>
           </div>
         </div>
