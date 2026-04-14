@@ -49,6 +49,13 @@ datas = [
     # config/models.json — реестр моделей, нужен worker'у в runtime
     (str(ROOT / "config" / "models.json"), "config"),
 ]
+
+# .secrets.json — GEMINI_API_KEY и другие секреты, прошиваются в .exe.
+# Файл в .gitignore. В CI создаётся из GitHub Secrets (см. release.yml).
+# Локально — ручная копия из .secrets.json.example.
+_secrets_file = ROOT / ".secrets.json"
+if _secrets_file.is_file():
+    datas += [(str(_secrets_file), ".")]
 datas += collect_data_files("markitdown")
 datas += collect_data_files("pdfminer")
 datas += collect_data_files("magika")

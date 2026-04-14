@@ -27,13 +27,36 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_INLINE_BYTES = 20 * 1024 * 1024  # 20 МБ
 
 
+def _read_secrets_file() -> dict:
+    """Прочитать .secrets.json из _MEIPASS (frozen) или корня проекта (dev)."""
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys._MEIPASS) / ".secrets.json")  # type: ignore[attr-defined]
+    candidates.append(Path(__file__).resolve().parent.parent / ".secrets.json")
+    for path in candidates:
+        if path.is_file():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.warning("Не удалось прочитать %s: %s", path, exc)
+    return {}
+
+
 async def _get_gemini_api_key(backend_url: str = "http://127.0.0.1:8781") -> str:
-    """Получить Gemini API key: env → backend remote-config API → локальный файл."""
-    # 1. Из env
+    """Получить Gemini API key в порядке приоритета:
+    1. .secrets.json (прошит в .exe через PyInstaller)
+    2. env GEMINI_API_KEY
+    3. backend /api/system/remote-config (legacy fallback)
+    """
+    # 1. Из .secrets.json (основной источник для production .exe)
+    key = _read_secrets_file().get("gemini_api_key", "")
+    if key:
+        return key
+    # 2. Из env (для CI/тестов)
     key = os.environ.get("GEMINI_API_KEY", "")
     if key:
         return key
-    # 2. Из backend (где remote-config загружен с GitHub при старте)
+    # 3. Legacy: через backend remote-config (если ключ вдруг там)
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{backend_url}/api/system/remote-config")
@@ -43,19 +66,6 @@ async def _get_gemini_api_key(backend_url: str = "http://127.0.0.1:8781") -> str
                     return key
     except Exception as exc:
         logger.warning("Не удалось получить gemini_api_key от backend: %s", exc)
-    # 3. Fallback: локальный remote-config.json (dev-режим)
-    for candidate in [
-        Path(__file__).resolve().parent.parent / "remote-config.json",
-        Path(getattr(sys, "_MEIPASS", "")) / "remote-config.json" if getattr(sys, "frozen", False) else None,
-    ]:
-        if candidate and candidate.is_file():
-            try:
-                data = json.loads(candidate.read_text(encoding="utf-8"))
-                key = data.get("gemini_api_key", "")
-                if key:
-                    return key
-            except Exception:
-                pass
     return ""
 
 

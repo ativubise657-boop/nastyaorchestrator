@@ -1,7 +1,6 @@
 {
-  "version": 3,
-  "updated_at": "2026-04-14T06:00:00Z",
+  "version": 4,
+  "updated_at": "2026-04-14T07:30:00Z",
   "header_emoji": "🚀",
-  "notes": "v3: ротация gemini_api_key (предыдущий утёк через публичный репо)",
-  "gemini_api_key": "AIzaSyC1D7KEGL-oAVRaJQR3K-67NVxyjrFd5Ow"
+  "notes": "v4: gemini_api_key вынесен из git — теперь в .secrets.json (прошивается в .exe через GitHub Secret GEMINI_API_KEY)"
 }

@@ -21,6 +21,9 @@ data/
 # Env
 .env
 
+# Секреты прошиваемые в .exe (создаётся из GitHub Secrets в CI)
+.secrets.json
+
 # Tauri / build artefacts
 src-tauri/target/
 src-tauri/binaries/*.exe
