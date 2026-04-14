@@ -309,6 +309,7 @@
   border: none;
   outline: none;
   resize: none;
+  box-shadow: none;
   font-family: 'Ubuntu Mono', monospace;
   font-size: var(--chat-font-size, 28px);
   line-height: 1.5;
@@ -318,6 +319,13 @@
   overflow-y: auto;
   padding: 0;
   margin: 0;
+}
+
+/* Убираем глобальное свечение textarea:focus (index.css) внутри чата —
+   оно выглядит как вторая рамка рядом с border от .chat-input */
+.chat-input__textarea:focus {
+  box-shadow: none;
+  border-color: transparent;
 }
 
 .chat-input__textarea::placeholder {
