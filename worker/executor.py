@@ -454,10 +454,11 @@ class CodexExecutor:
         )
 
         logger.info(
-            "Запускаем Codex CLI: mode=%s, images=%d, workspace=%s, prompt_len=%d",
+            "Запускаем Codex CLI: mode=%s, images=%d, workspace=%s, add_dirs=%s, prompt_len=%d",
             mode,
             len(image_paths),
             workspace,
+            add_dirs,
             len(full_prompt),
         )
 
