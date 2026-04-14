@@ -366,6 +366,14 @@ async def queue_next(request: Request):
                 for r in all_rows
             ]
 
+    # Папка документов проекта — передаём всегда, чтобы Codex мог читать её
+    # через --add-dir даже если конкретный файл не прикреплён к сообщению.
+    from backend.core.config import DOCUMENTS_DIR
+    import os as _os
+    _docs_dir = _os.path.join(DOCUMENTS_DIR, project_id)
+    if _os.path.isdir(_docs_dir):
+        task["documents_dir"] = _docs_dir
+
     # Документы, явно приложенные к этому сообщению — автоматически requested.
     # Читаются из tasks.attachment_document_ids (записано в chat.py при /send).
     attached_ids: set[str] = set()

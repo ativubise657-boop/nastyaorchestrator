@@ -318,6 +318,7 @@ class Poller:
         documents: list[dict] | None = task.get("documents")
         doc_folders: list[str] | None = task.get("doc_folders")
         completed_tasks: list[dict] | None = task.get("completed_tasks")
+        documents_dir: str | None = task.get("documents_dir")
 
         # Перехват встроенных команд (без вызова Codex CLI)
         if is_command(prompt):
@@ -392,6 +393,7 @@ class Poller:
                 documents=documents,
                 doc_folders=doc_folders,
                 completed_tasks=completed_tasks,
+                documents_dir=documents_dir,
                 on_chunk=on_chunk,
             )
 

@@ -382,6 +382,7 @@ class CodexExecutor:
         documents: list[dict] | None = None,
         doc_folders: list[str] | None = None,
         completed_tasks: list[dict] | None = None,
+        documents_dir: str | None = None,
         on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         github_context = None
@@ -435,6 +436,16 @@ class CodexExecutor:
             documents=documents,
             image_paths=image_paths,
         )
+        # Папка документов проекта — всегда добавляем в --add-dir, даже если
+        # конкретные файлы не прикреплены. Codex сможет читать/искать по ней
+        # когда Настя спросит "что лежит в документах" или "найди файл X".
+        if documents_dir and os.path.isdir(documents_dir):
+            _dd = str(Path(documents_dir).resolve())
+            try:
+                Path(_dd).relative_to(Path(workspace).resolve())
+            except ValueError:
+                if _dd not in add_dirs:
+                    add_dirs.append(_dd)
         cmd = self._build_command(
             model=model,
             workspace=workspace,
