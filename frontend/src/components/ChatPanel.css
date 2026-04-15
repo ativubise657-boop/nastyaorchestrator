@@ -836,6 +836,13 @@
   background: rgba(16, 185, 129, 0.08);
 }
 
+/* МАРК — розовый (маркетинг → анализ/исследование) */
+.cmd-btn--mark:hover:not(:disabled) {
+  color: #ec4899;
+  border-color: rgba(236, 72, 153, 0.4);
+  background: rgba(236, 72, 153, 0.08);
+}
+
 /* ПРЕ — оранжевый (компоновка → предупреждение) */
 .cmd-btn--pre:hover:not(:disabled) {
   color: #f59e0b;

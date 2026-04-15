@@ -253,6 +253,11 @@ interface AppStore {
   clearDocRefs: () => void
   getDocRefsText: () => string
 
+  // Ссылки (URL) отмеченные для анализа — мультиселект
+  linkRefsSelected: Set<string>
+  toggleLinkRef: (linkId: string) => void
+  clearLinkRefs: () => void
+
   // Runtime statusline metrics
   statusline: StatuslineData | null
   setStatusline: (data: StatuslineData | null) => void
@@ -400,7 +405,13 @@ export const useStore = create<AppStore>((set, get) => ({
 
   selectProject: (id) => {
     localStorage.setItem('selectedProjectId', id)
-    set({ selectedProjectId: id, messages: [], selectedDocId: null })
+    set({
+      selectedProjectId: id,
+      messages: [],
+      selectedDocId: null,
+      docRefsSelected: new Set<string>(),
+      linkRefsSelected: new Set<string>(),
+    })
   },
 
   // --- Чат ---
@@ -425,11 +436,45 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   sendMessage: async (message, modelOverride?, attachments?) => {
-    const { selectedProjectId, selectedModel } = get()
+    const { selectedProjectId, selectedModel, documents, selectedDocId, docRefsSelected, links, linkRefsSelected } = get()
     const model = normalizeChatModel(modelOverride || selectedModel)
     if (!selectedProjectId) return
 
-    const atts = attachments || []
+    // Собираем финальный список attachments:
+    // 1) явные (переданные аргументом)
+    // 2) отмеченные чекбоксом в сайдбаре (docRefsSelected)
+    // 3) активный для превью (selectedDocId) — тот, что кликнут в панели
+    // Дедуп по document_id.
+    const atts: ChatAttachment[] = []
+    const seenIds = new Set<string>()
+    const pushDoc = (docId: string) => {
+      if (seenIds.has(docId)) return
+      const doc = documents.find((d) => d.id === docId)
+      if (!doc) return
+      atts.push({
+        filename: doc.filename,
+        size: doc.size,
+        content_type: doc.content_type,
+        document_id: doc.id,
+      })
+      seenIds.add(docId)
+    }
+    for (const a of attachments || []) {
+      atts.push(a)
+      if (a.document_id) seenIds.add(a.document_id)
+    }
+    for (const docId of docRefsSelected) pushDoc(docId)
+    if (selectedDocId) pushDoc(selectedDocId)
+
+    // Если отмечены ссылки чекбоксами — добавляем их блоком в начало API-сообщения.
+    // В UI показываем оригинальный текст (без служебного блока), Codex получает с префиксом.
+    const activeLinks = links.filter((l) => linkRefsSelected.has(l.id))
+    const linksBlock = activeLinks.length
+      ? '[Активные ссылки для анализа — используй именно их как основной источник]\n' +
+        activeLinks.map((l) => `- ${l.url}${l.title ? ` — ${l.title}` : ''}${l.description ? ` (${l.description})` : ''}`).join('\n') +
+        '\n\n'
+      : ''
+    const apiMessage = linksBlock + message
 
     // Оптимистично добавляем сообщение пользователя (с attachments)
     const tempUserMsg: ChatMessage = {
@@ -450,11 +495,12 @@ export const useStore = create<AppStore>((set, get) => ({
         '/api/chat/send',
         {
           method: 'POST',
-          body: JSON.stringify({ project_id: selectedProjectId, message, model, attachments: atts }),
+          body: JSON.stringify({ project_id: selectedProjectId, message: apiMessage, model, attachments: atts }),
         },
       )
 
-      // Заменяем временное сообщение реальным
+      // Заменяем временное сообщение реальным + сбрасываем чекбоксы документов/ссылок
+      // (selectedDocId оставляем — это "активный для превью", он не должен слетать)
       set((state) => ({
         messages: state.messages.map((m) =>
           m.id === tempUserMsg.id
@@ -463,6 +509,8 @@ export const useStore = create<AppStore>((set, get) => ({
         ),
         sendingMessage: false,
         currentTaskId: result.task_id,
+        docRefsSelected: new Set<string>(),
+        linkRefsSelected: new Set<string>(),
         tasks: {
           ...state.tasks,
           [result.task_id]: {
@@ -844,7 +892,14 @@ export const useStore = create<AppStore>((set, get) => ({
 
   deleteLink: async (projectId, linkId) => {
     await apiFetch(`/api/links/${projectId}/${linkId}`, { method: 'DELETE' })
-    set((state) => ({ links: state.links.filter((l) => l.id !== linkId) }))
+    set((state) => {
+      const nextLinkRefs = new Set(state.linkRefsSelected)
+      nextLinkRefs.delete(linkId)
+      return {
+        links: state.links.filter((l) => l.id !== linkId),
+        linkRefsSelected: nextLinkRefs,
+      }
+    })
   },
 
   // --- Ссылки на документы (мультиселект для вставки в чат) ---
@@ -864,6 +919,16 @@ export const useStore = create<AppStore>((set, get) => ({
       .map((d, i) => `#${i + 1} ${d.filename}`)
     return refs.join(', ')
   },
+
+  // --- Ссылки (URL) для анализа ---
+  linkRefsSelected: new Set<string>(),
+  toggleLinkRef: (linkId) => set((state) => {
+    const next = new Set(state.linkRefsSelected)
+    if (next.has(linkId)) next.delete(linkId)
+    else next.add(linkId)
+    return { linkRefsSelected: next }
+  }),
+  clearLinkRefs: () => set({ linkRefsSelected: new Set() }),
 
   // Statusline
   statusline: null,
@@ -892,3 +957,4 @@ export const useDocPanelOpen = () => useStore((s) => s.docPanelOpen)
 export const useFolders = () => useStore(useShallow((s) => s.folders))
 export const useDocViewMode = () => useStore((s) => s.docViewMode)
 export const useLinks = () => useStore(useShallow((s) => s.links))
+export const useLinkRefsSelected = () => useStore((s) => s.linkRefsSelected)

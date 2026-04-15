@@ -9,6 +9,7 @@ import {
   useDocViewMode,
   useProjects,
   useLinks,
+  useLinkRefsSelected,
   type Document,
   type Folder,
   type Link,
@@ -626,6 +627,8 @@ export function DocPanel() {
   const addLink = useStore((s) => s.addLink)
   const updateLink = useStore((s) => s.updateLink)
   const deleteLink = useStore((s) => s.deleteLink)
+  const linkRefsSelected = useLinkRefsSelected()
+  const toggleLinkRef = useStore((s) => s.toggleLinkRef)
 
   const [showLinkForm, setShowLinkForm] = useState(false)
   const [linkUrl, setLinkUrl] = useState('')
@@ -1188,8 +1191,17 @@ export function DocPanel() {
                   </svg>
                   <span>Ссылки</span>
                 </div>
-                {links.map((link) => (
-                  <div key={link.id} className={`doc-panel__link-item ${deletingLinkId === link.id ? 'doc-panel__link-item--deleting' : ''}`}>
+                {links.map((link) => {
+                  const linkChecked = linkRefsSelected.has(link.id)
+                  return (
+                  <div key={link.id} className={`doc-panel__link-item ${linkChecked ? 'doc-panel__link-item--checked' : ''} ${deletingLinkId === link.id ? 'doc-panel__link-item--deleting' : ''}`}>
+                    <label className="doc-panel__link-checkbox" onClick={(e) => e.stopPropagation()} title="Отметить ссылку для анализа">
+                      <input
+                        type="checkbox"
+                        checked={linkChecked}
+                        onChange={() => toggleLinkRef(link.id)}
+                      />
+                    </label>
                     <div className="doc-panel__link-info">
                       <a className="doc-panel__link-title" href={link.url} target="_blank" rel="noopener noreferrer" title={link.url}>
                         {link.title}
@@ -1205,7 +1217,8 @@ export function DocPanel() {
                       </button>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
