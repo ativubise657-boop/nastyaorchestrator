@@ -82,9 +82,10 @@ class Poller:
         # Флаг остановки (выставляется SIGINT/SIGTERM)
         self._stop_event = asyncio.Event()
 
-        # ID текущей задачи (для heartbeat)
-        self._current_task_id: str | None = None
-        self._current_executor: CodexExecutor | AITunnelExecutor | GeminiExecutor | None = None
+        # Активные задачи: task_id → executor. Поддерживает параллельное
+        # выполнение (max_concurrent_tasks). Heartbeat проходит по всем ключам
+        # при cancel — находит конкретный executor и дёргает cancel().
+        self._active_tasks: dict[str, CodexExecutor | AITunnelExecutor | GeminiExecutor] = {}
 
     def _get_executor(self, model: str) -> CodexExecutor | AITunnelExecutor | GeminiExecutor:
         if _is_gemini_model(model):
@@ -221,22 +222,69 @@ class Poller:
                 pass
 
     async def _poll_loop(self) -> None:
-        """Основной цикл: поллинг → выполнение → результат."""
+        """Основной цикл поллинга с параллельным выполнением задач.
+
+        Держит до `max_concurrent_tasks` одновременно. Если лимит достигнут —
+        ждёт освобождения хотя бы одной. Если очередь пуста — ждёт poll_interval
+        (но не дольше чем есть running-задачи, которые тоже считаются "работой").
+        """
+        running: set[asyncio.Task] = set()
+        max_concurrent = max(1, self.config.max_concurrent_tasks)
+
         while not self._stop_event.is_set():
+            # Уборка завершённых asyncio.Task
+            running = {t for t in running if not t.done()}
+
+            # Лимит достигнут — ждём первой завершённой
+            if len(running) >= max_concurrent:
+                await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+                continue
+
             task = await self._fetch_next_task()
 
             if task is None:
-                # Нет задач — ждём перед следующим запросом
-                try:
-                    await asyncio.wait_for(
-                        self._stop_event.wait(),
-                        timeout=self.config.poll_interval,
-                    )
-                except asyncio.TimeoutError:
-                    pass
+                # Очередь пуста. Если есть running — ждём либо завершения одной,
+                # либо poll_interval. Если running нет — просто poll_interval.
+                if running:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED),
+                            timeout=self.config.poll_interval,
+                        )
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    try:
+                        await asyncio.wait_for(
+                            self._stop_event.wait(),
+                            timeout=self.config.poll_interval,
+                        )
+                    except asyncio.TimeoutError:
+                        pass
                 continue
 
+            # Запускаем задачу параллельно
+            t = asyncio.create_task(
+                self._process_task_safe(task),
+                name=f"task-{task.get('id', 'unknown')}",
+            )
+            running.add(t)
+
+        # Graceful shutdown — дожидаемся всех running
+        if running:
+            logger.info("Дожидаемся завершения %d параллельных задач...", len(running))
+            await asyncio.gather(*running, return_exceptions=True)
+
+    async def _process_task_safe(self, task: dict[str, Any]) -> None:
+        """Враппер над _process_task — ловит любое исключение,
+        чтобы одна упавшая задача не завалила весь poll_loop."""
+        try:
             await self._process_task(task)
+        except Exception:
+            logger.exception(
+                "Непойманное исключение в _process_task для задачи %s",
+                task.get("id"),
+            )
 
     async def _fetch_next_task(self) -> dict[str, Any] | None:
         """GET /api/queue/next — забрать следующую задачу из очереди.
@@ -326,7 +374,6 @@ class Poller:
         # Перехват встроенных команд (без вызова Codex CLI)
         if is_command(prompt):
             logger.info("Встроенная команда: %s (задача %s)", prompt.strip(), task_id)
-            self._current_task_id = task_id
             try:
                 result = await handle_command(prompt, project, chat_history)
                 await self.pusher.push_result(
@@ -342,8 +389,6 @@ class Poller:
                     status="failed",
                     error=f"Ошибка команды: {e}",
                 )
-            finally:
-                self._current_task_id = None
             return
 
         # Умное определение фазы по интенту промпта и контексту
@@ -356,9 +401,8 @@ class Poller:
             task_id, mode, model, len(chat_history) if chat_history else 0, bool(git_url),
         )
 
-        self._current_task_id = task_id
         executor = self._get_executor(model)
-        self._current_executor = executor
+        self._active_tasks[task_id] = executor
 
         try:
             # Флаг: получили ли хоть один чанк текста
@@ -472,20 +516,24 @@ class Poller:
                 error=f"Внутренняя ошибка worker: {e}",
             )
         finally:
-            self._current_executor = None
-            self._current_task_id = None
+            self._active_tasks.pop(task_id, None)
 
     async def _heartbeat_loop(self) -> None:
-        """Периодически отправляет heartbeat на сервер. Проверяет отмену задачи."""
+        """Периодически отправляет heartbeat на сервер. Проверяет отмену задачи.
+
+        При параллельном выполнении: шлём heartbeat-пинг от имени worker'а
+        (без конкретного task_id), проверяем cancel_task_id против всех активных.
+        """
         while True:
             await asyncio.sleep(self.config.heartbeat_interval)
-            resp = await self.pusher.send_heartbeat(task_id=self._current_task_id)
+            # Один heartbeat без конкретной задачи — пинг "worker жив"
+            resp = await self.pusher.send_heartbeat(task_id=None)
             if resp:
-                # Проверяем не отменена ли текущая задача
                 cancel_id = resp.get("cancel_task_id")
-                if cancel_id and cancel_id == self._current_task_id:
+                if cancel_id and cancel_id in self._active_tasks:
                     logger.info("Задача %s отменена пользователем — прерываем", cancel_id)
-                    if self._current_executor is not None:
-                        self._current_executor.cancel()
+                    executor = self._active_tasks.get(cancel_id)
+                    if executor is not None:
+                        executor.cancel()
             else:
                 logger.warning("Heartbeat не доставлен")

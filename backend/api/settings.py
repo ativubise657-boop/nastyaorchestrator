@@ -8,8 +8,11 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Request
@@ -19,6 +22,25 @@ from backend.core import proxy as proxy_module
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _read_secrets_file() -> dict:
+    """Читает .secrets.json из _MEIPASS (PyInstaller) или корня проекта (dev).
+
+    Этот файл прошивается в .exe через GitHub Actions (release.yml) из секретов
+    GitHub. В dev-окружении может отсутствовать — тогда fallback на .env.
+    """
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(getattr(sys, "_MEIPASS", "")) / ".secrets.json")
+    candidates.append(Path(__file__).resolve().parent.parent.parent / ".secrets.json")
+    for path in candidates:
+        if path.is_file():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.warning("Не удалось прочитать %s: %s", path, exc)
+    return {}
 
 
 class ProxyPayload(BaseModel):
@@ -136,13 +158,34 @@ def _load_aitunnel_key(state) -> str:
 
 
 def _apply_aitunnel_key_env(state) -> None:
-    """Вызывается на startup — кладёт ключ из БД в os.environ если он там есть.
-    Таким образом все os.getenv('AITUNNEL_API_KEY') после этого видят пользовательский ключ."""
+    """Вызывается на startup. Приоритет источников (от высшего к низшему):
+      1. БД `app_settings.aitunnel_api_key` (пользовательский override из UI Settings)
+      2. .env (уже подгружен через load_dotenv при импорте config.py)
+      3. .secrets.json (прошитый в билд через GitHub Actions)
+    Итог кладём в `os.environ["AITUNNEL_API_KEY"]` — все `os.getenv` видят актуальное значение.
+    """
     row = state.fetchone("SELECT value FROM app_settings WHERE key = 'aitunnel_api_key'")
     db_value = (row["value"] if row else "") or ""
+    env_value = os.environ.get("AITUNNEL_API_KEY", "")
+
     if db_value:
         os.environ["AITUNNEL_API_KEY"] = db_value
-        logger.info("AITunnel key: применён из БД (длина %d)", len(db_value))
+        logger.info("AITunnel key: из БД (длина %d)", len(db_value))
+        return
+
+    if env_value:
+        # Уже в env (из .env или previous startup) — ничего не трогаем
+        logger.info("AITunnel key: из env (длина %d)", len(env_value))
+        return
+
+    # Fallback — .secrets.json (прошитый в .exe)
+    secrets = _read_secrets_file()
+    sf_value = (secrets.get("aitunnel_api_key") or "").strip()
+    if sf_value:
+        os.environ["AITUNNEL_API_KEY"] = sf_value
+        logger.info("AITunnel key: из .secrets.json (длина %d)", len(sf_value))
+    else:
+        logger.info("AITunnel key: не задан ни в одном источнике")
 
 
 def _mask(key: str) -> str:

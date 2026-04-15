@@ -68,6 +68,25 @@ jobs:
         # Тот же набор что в dev-gui Release workflow.
         run: python -m pytest -q --tb=line
 
+      - name: Create .secrets.json from GitHub Secrets
+        # Прошивается в worker.exe/backend.exe через PyInstaller.
+        # Файл в .gitignore — в репе его нет, только в билд-артефакте.
+        # Если AITUNNEL_API_KEY не задан — файл не создаётся,
+        # Gemini OCR 3-го уровня не работает (но markitdown+pdfminer покрывают 80%).
+        shell: pwsh
+        env:
+          AITUNNEL_API_KEY: ${{ secrets.AITUNNEL_API_KEY }}
+        run: |
+          if (-not $env:AITUNNEL_API_KEY) {
+            Write-Warning "AITUNNEL_API_KEY secret не задан — .secrets.json не создан. Gemini OCR не прошивается в билд."
+            exit 0
+          }
+          $secrets = @{
+            aitunnel_api_key = $env:AITUNNEL_API_KEY
+          }
+          $secrets | ConvertTo-Json | Out-File -Encoding utf8 -NoNewline .secrets.json
+          Write-Host ".secrets.json создан (aitunnel_api_key длиной $($env:AITUNNEL_API_KEY.Length))"
+
       - name: Build backend with PyInstaller
         run: pyinstaller build/backend.spec --noconfirm --distpath build/dist --workpath build/work
 

@@ -34,6 +34,11 @@ class WorkerConfig:
     # ей нужно чтобы Codex парсил PDF, искал по всему компу и т.п. без ручного toggle.
     # Ужать режим всегда можно в Settings → Sandbox.
     codex_sandbox: str = os.getenv("CODEX_SANDBOX", "danger-full-access")
+    # Максимум задач выполняемых одновременно в одном worker-процессе.
+    # 2-3 нормально для десктоп-Насти: пока одна долго думает (rev/ag+),
+    # параллельно отрабатывают короткие ответы. Выше 5 — нет смысла (Codex CLI
+    # subprocess'ы начинают конкурировать за сеть/CPU).
+    max_concurrent_tasks: int = int(os.getenv("MAX_CONCURRENT_TASKS", "2"))
     aitunnel_api_key: str = os.getenv("AITUNNEL_API_KEY", "")
     aitunnel_base_url: str = os.getenv("AITUNNEL_BASE_URL", "https://api.aitunnel.ru/v1")
     aitunnel_request_timeout: int = int(os.getenv("AITUNNEL_REQUEST_TIMEOUT", "120"))
