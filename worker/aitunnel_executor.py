@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from worker.aitunnel_tools import AITunnelToolRunner, get_tool_definitions
-from worker.executor import CodexExecutor, PROJECT_ROOT
+from worker.base_executor import BaseExecutor, PROJECT_ROOT
 from worker.models_registry import get_model_id
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ DEFAULT_MAX_TOOL_ROUNDS = 16
 STREAM_CHUNK_SIZE = 80
 
 
-class AITunnelExecutor(CodexExecutor):
+class AITunnelExecutor(BaseExecutor):
     """OpenAI-compatible AI Tunnel executor with project tools."""
 
     TOOL_PROMPT = (
@@ -48,7 +48,7 @@ class AITunnelExecutor(CodexExecutor):
         max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
         task_timeout: int = 600,
     ):
-        super().__init__(codex_binary="codex", task_timeout=task_timeout)
+        super().__init__(task_timeout=task_timeout)
         self.api_key = api_key or os.getenv("AITUNNEL_API_KEY", "")
         self.base_url = (base_url or os.getenv("AITUNNEL_BASE_URL", DEFAULT_AITUNNEL_BASE_URL)).rstrip("/")
         self.request_timeout = int(os.getenv("AITUNNEL_REQUEST_TIMEOUT", str(request_timeout)))
@@ -85,35 +85,10 @@ class AITunnelExecutor(CodexExecutor):
 
         self._cancelled = False
 
-        github_context = None
-        if git_url:
-            try:
-                from worker.github_client import build_project_context
-
-                github_context = await build_project_context(git_url)
-                if github_context:
-                    logger.info("GitHub контекст подтянут для AI Tunnel: %d символов", len(github_context))
-            except Exception as exc:
-                logger.warning("Не удалось подтянуть GitHub контекст для AI Tunnel: %s", exc)
-        elif all_projects:
-            try:
-                from worker.github_client import build_all_projects_context
-
-                github_context = await build_all_projects_context(all_projects)
-                if github_context:
-                    logger.info("GitHub контекст всех проектов для AI Tunnel: %d символов", len(github_context))
-            except Exception as exc:
-                logger.warning("Не удалось подтянуть общий GitHub контекст для AI Tunnel: %s", exc)
-
-        crm_context = None
-        try:
-            from worker.bitrix_client import build_crm_context
-
-            crm_context = await build_crm_context(prompt)
-            if crm_context:
-                logger.info("CRM контекст подтянут для AI Tunnel: %d символов", len(crm_context))
-        except Exception as exc:
-            logger.warning("Не удалось получить CRM контекст для AI Tunnel: %s", exc)
+        # Fix 4.4A: GitHub и CRM контексты параллельно (asyncio.gather в BaseExecutor)
+        github_context, crm_context = await self._fetch_contexts_parallel(
+            git_url=git_url, all_projects=all_projects, prompt=prompt,
+        )
 
         workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
 

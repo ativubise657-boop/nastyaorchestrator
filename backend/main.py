@@ -164,6 +164,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Не удалось применить прокси на startup: %s", exc)
 
+    # AITUNNEL_API_KEY: если в БД есть пользовательский ключ — переопределяем
+    # env (БД > .env > прошитый дефолт). Настя может ввести/поменять его
+    # через UI Settings без перезапуска приложения.
+    try:
+        from backend.api.settings import _apply_aitunnel_key_env
+        _apply_aitunnel_key_env(app.state.db)
+    except Exception as exc:
+        logger.warning("Не удалось применить AITunnel key на startup: %s", exc)
+
     # SSE: список asyncio.Queue для подключённых клиентов
     app.state.event_queues: list[asyncio.Queue] = []
     app.state.app_updates: dict[str, dict] = {}

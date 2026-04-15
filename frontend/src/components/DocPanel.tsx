@@ -271,6 +271,24 @@ function DocItem({
           ) : (
             <span className="doc-item__name" title={doc.filename}>
               {doc.filename}
+              {doc.parse_status === 'pending' && (
+                <span
+                  className="doc-item__parse-pending"
+                  title="Парсим содержимое в фоне — обновлю когда готово"
+                  aria-label="Парсинг в процессе"
+                >
+                  ⏳
+                </span>
+              )}
+              {doc.parse_status === 'failed' && (
+                <span
+                  className="doc-item__parse-warn"
+                  title={doc.parse_error || 'Не удалось извлечь текст из файла — ассистент увидит только имя и размер'}
+                  aria-label="Парсинг не удался"
+                >
+                  ⚠
+                </span>
+              )}
             </span>
           )}
           <span className="doc-item__meta">

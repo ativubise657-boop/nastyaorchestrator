@@ -26,12 +26,14 @@ class WorkerConfig:
     worker_token: str = os.getenv("WORKER_TOKEN", _DEFAULT_TOKEN)
     codex_binary: str = os.getenv("CODEX_BINARY", os.getenv("CLAUDE_BINARY", _DEFAULT_CODEX))
     # Sandbox-режим Codex CLI:
-    #   workspace-write    — безопасно: read/write только в workspace + --add-dir
+    #   workspace-write    — read/write только в workspace + --add-dir, exec внешних
+    #                        тулзов (pdftotext и пр.) РЕЖЕТСЯ политикой → PDF не читается
     #   read-only          — только чтение, без exec
-    #   danger-full-access — полный доступ к ОС (включая shell exec по всему диску)
-    # Для Насти обычно workspace-write; если нужно "найди файлы по всему компу" —
-    # переключить на danger-full-access через переменную окружения.
-    codex_sandbox: str = os.getenv("CODEX_SANDBOX", "workspace-write")
+    #   danger-full-access — полный доступ к ОС и exec по всему диску
+    # Дефолт — danger-full-access: это десктоп-приложение для единственной Насти,
+    # ей нужно чтобы Codex парсил PDF, искал по всему компу и т.п. без ручного toggle.
+    # Ужать режим всегда можно в Settings → Sandbox.
+    codex_sandbox: str = os.getenv("CODEX_SANDBOX", "danger-full-access")
     aitunnel_api_key: str = os.getenv("AITUNNEL_API_KEY", "")
     aitunnel_base_url: str = os.getenv("AITUNNEL_BASE_URL", "https://api.aitunnel.ru/v1")
     aitunnel_request_timeout: int = int(os.getenv("AITUNNEL_REQUEST_TIMEOUT", "120"))

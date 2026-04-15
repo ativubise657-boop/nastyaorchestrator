@@ -26,13 +26,19 @@ const SANDBOX_LABELS: Record<string, string> = {
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<ProxySettings>(EMPTY)
-  const [sandbox, setSandbox] = useState<string>('workspace-write')
+  const [sandbox, setSandbox] = useState<string>('danger-full-access')
   const [sandboxSaving, setSandboxSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [savedAt, setSavedAt] = useState<number | null>(null)
+
+  // AITunnel API key state
+  const [aitunnelMasked, setAitunnelMasked] = useState<string>('')
+  const [aitunnelSource, setAitunnelSource] = useState<string>('')
+  const [aitunnelInput, setAitunnelInput] = useState<string>('')
+  const [aitunnelSaving, setAitunnelSaving] = useState(false)
 
   useEffect(() => {
     fetch('/api/settings/proxy')
@@ -44,7 +50,31 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       .then((r) => r.json())
       .then((data) => data?.mode && setSandbox(data.mode))
       .catch(() => {})
+    fetch('/api/settings/aitunnel_key')
+      .then((r) => r.json())
+      .then((data) => {
+        setAitunnelMasked(data?.masked || '')
+        setAitunnelSource(data?.source || '')
+      })
+      .catch(() => {})
   }, [])
+
+  const saveAitunnelKey = async (apiKey: string) => {
+    setAitunnelSaving(true)
+    try {
+      const res = await fetch('/api/settings/aitunnel_key', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKey }),
+      })
+      const data = await res.json()
+      setAitunnelMasked(data?.masked || '')
+      setAitunnelSource(apiKey.trim() ? 'db' : (data?.present ? 'env' : ''))
+      setAitunnelInput('')
+    } finally {
+      setAitunnelSaving(false)
+    }
+  }
 
   const saveSandbox = async (mode: string) => {
     setSandbox(mode)
@@ -197,6 +227,49 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             <div style={{ fontSize: 11, opacity: 0.6, marginTop: 8 }}>
               Изменения применяются мгновенно к новым исходящим запросам backend.
               Worker подхватит при следующем перезапуске.
+            </div>
+
+            {/* Секция: AITunnel API key (для Gemini PDF OCR) */}
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: 14 }}>AITunnel API key</h4>
+              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
+                Используется для Gemini 2.5 Flash — OCR сканированных PDF когда markitdown/pdfminer не справляются.
+                {aitunnelMasked
+                  ? (
+                    <> Сейчас активен ключ <code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 4px', borderRadius: 3 }}>{aitunnelMasked}</code> (источник: {aitunnelSource === 'db' ? 'приложение' : aitunnelSource === 'env' ? '.env файл' : '—'}).</>
+                  )
+                  : <> Ключ не задан — OCR-уровень работать не будет.</>
+                }
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="password"
+                  placeholder="sk-aitunnel-..."
+                  value={aitunnelInput}
+                  onChange={(e) => setAitunnelInput(e.target.value)}
+                  disabled={aitunnelSaving}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  onClick={() => saveAitunnelKey(aitunnelInput)}
+                  disabled={aitunnelSaving || !aitunnelInput.trim()}
+                >
+                  {aitunnelSaving ? 'Сохранение…' : 'Сохранить'}
+                </button>
+                {aitunnelSource === 'db' && (
+                  <button
+                    onClick={() => saveAitunnelKey('')}
+                    disabled={aitunnelSaving}
+                    title="Удалить пользовательский ключ, вернуться к .env"
+                  >
+                    Сбросить
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.5, marginTop: 6 }}>
+                Ключ применяется мгновенно — следующий upload PDF сможет использовать его.
+                Хранится в локальной БД приложения.
+              </div>
             </div>
 
             {/* Секция: Доступ ассистента к файлам */}

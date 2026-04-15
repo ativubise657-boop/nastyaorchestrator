@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Request
@@ -84,7 +85,7 @@ async def test_proxy(payload: Optional[ProxyPayload] = None, request: Request = 
 # ---------------------------------------------------------------------------
 
 SANDBOX_VALID = {"workspace-write", "read-only", "danger-full-access"}
-SANDBOX_DEFAULT = "workspace-write"
+SANDBOX_DEFAULT = "danger-full-access"
 
 
 class SandboxPayload(BaseModel):
@@ -115,3 +116,71 @@ async def put_sandbox(payload: SandboxPayload, request: Request):
     state.commit()
     logger.info("Codex sandbox mode → %s", payload.mode)
     return {"ok": True, "mode": payload.mode}
+
+
+# ---------------------------------------------------------------------------
+# AITunnel API key (для Gemini PDF parsing через AITunnel)
+# Ключ можно ввести прямо в UI Settings — сохраняется в app_settings,
+# переопределяет env при старте и мгновенно при PUT.
+# ---------------------------------------------------------------------------
+
+class AITunnelKeyPayload(BaseModel):
+    api_key: str = Field(default="", description="Пустая строка = удалить ключ, вернуться к env")
+
+
+def _load_aitunnel_key(state) -> str:
+    """Возвращает user-override из БД или fallback из env."""
+    row = state.fetchone("SELECT value FROM app_settings WHERE key = 'aitunnel_api_key'")
+    db_value = (row["value"] if row else "") or ""
+    return db_value or os.getenv("AITUNNEL_API_KEY", "")
+
+
+def _apply_aitunnel_key_env(state) -> None:
+    """Вызывается на startup — кладёт ключ из БД в os.environ если он там есть.
+    Таким образом все os.getenv('AITUNNEL_API_KEY') после этого видят пользовательский ключ."""
+    row = state.fetchone("SELECT value FROM app_settings WHERE key = 'aitunnel_api_key'")
+    db_value = (row["value"] if row else "") or ""
+    if db_value:
+        os.environ["AITUNNEL_API_KEY"] = db_value
+        logger.info("AITunnel key: применён из БД (длина %d)", len(db_value))
+
+
+def _mask(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 12:
+        return "***"
+    return f"{key[:6]}...{key[-4:]}"
+
+
+@router.get("/aitunnel_key")
+async def get_aitunnel_key(request: Request):
+    state = request.app.state.db
+    key = _load_aitunnel_key(state)
+    # Источник: 'db' если в app_settings есть, 'env' если только из .env, '' если нет
+    row = state.fetchone("SELECT value FROM app_settings WHERE key = 'aitunnel_api_key'")
+    source = "db" if (row and row["value"]) else ("env" if key else "")
+    return {"present": bool(key), "masked": _mask(key), "source": source}
+
+
+@router.put("/aitunnel_key")
+async def put_aitunnel_key(payload: AITunnelKeyPayload, request: Request):
+    state = request.app.state.db
+    key = payload.api_key.strip()
+    if not key:
+        state.execute("DELETE FROM app_settings WHERE key = 'aitunnel_api_key'")
+        # Возвращаемся к env
+        env_key = os.getenv("AITUNNEL_API_KEY", "")
+        if env_key:
+            os.environ["AITUNNEL_API_KEY"] = env_key
+        logger.info("AITunnel key: очищен, fallback на env (%s)", "есть" if env_key else "нет")
+    else:
+        state.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('aitunnel_api_key', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key,),
+        )
+        os.environ["AITUNNEL_API_KEY"] = key
+        logger.info("AITunnel key: обновлён (длина %d)", len(key))
+    state.commit()
+    return {"ok": True, "present": bool(key), "masked": _mask(key)}

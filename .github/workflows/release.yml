@@ -68,24 +68,6 @@ jobs:
         # Тот же набор что в dev-gui Release workflow.
         run: python -m pytest -q --tb=line
 
-      - name: Create .secrets.json from GitHub Secrets
-        # Прошивается в worker.exe через PyInstaller (см. build/worker.spec).
-        # Файл в .gitignore — в репе его нет, только в runtime артефакте.
-        # Если GEMINI_API_KEY не задан — пропускаем (Gemini модель просто не будет работать).
-        shell: pwsh
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          if (-not $env:GEMINI_API_KEY) {
-            Write-Warning "GEMINI_API_KEY secret не задан — .secrets.json не создан. Gemini Flash не будет работать."
-            exit 0
-          }
-          $secrets = @{
-            gemini_api_key = $env:GEMINI_API_KEY
-          }
-          $secrets | ConvertTo-Json | Out-File -Encoding utf8 -NoNewline .secrets.json
-          Write-Host ".secrets.json создан (ключ длиной $($env:GEMINI_API_KEY.Length) символов)"
-
       - name: Build backend with PyInstaller
         run: pyinstaller build/backend.spec --noconfirm --distpath build/dist --workpath build/work
 

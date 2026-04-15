@@ -96,6 +96,8 @@ export interface Document {
   content_type?: string
   folder_id: string | null
   content?: string
+  parse_status?: 'parsed' | 'failed' | 'skipped' | 'pending'
+  parse_error?: string
 }
 
 export type DocViewMode = 'project' | 'all'
@@ -197,6 +199,7 @@ interface AppStore {
   moveDocument: (projectId: string, docId: string, folderId: string | null) => Promise<void>
   selectDocument: (id: string | null) => void
   loadDocumentContent: (projectId: string, docId: string) => Promise<string>
+  updateDocumentParseStatus: (docId: string, parseStatus: Document['parse_status'], parseError?: string) => void
 
   // Папки
   folders: Folder[]
@@ -786,6 +789,16 @@ export const useStore = create<AppStore>((set, get) => ({
       ),
     }))
   },
+
+  // Fix 4.1A: обновление parse_status через SSE event document_parsed
+  updateDocumentParseStatus: (docId, parseStatus, parseError) =>
+    set((state) => ({
+      documents: state.documents.map((d) =>
+        d.id === docId
+          ? { ...d, parse_status: parseStatus, parse_error: parseError ?? '' }
+          : d
+      ),
+    })),
 
   // --- Worker ---
   workerOnline: false,

@@ -76,6 +76,8 @@ class State:
         content_type TEXT DEFAULT '',
         is_scratch   INTEGER DEFAULT 0,
         folder_id    TEXT,
+        parse_status TEXT DEFAULT 'skipped',
+        parse_error  TEXT DEFAULT '',
         created_at   TEXT NOT NULL,
         FOREIGN KEY (folder_id) REFERENCES folders(id)
     );
@@ -207,6 +209,17 @@ class State:
         except sqlite3.OperationalError:
             try:
                 conn.execute("ALTER TABLE documents ADD COLUMN is_scratch INTEGER DEFAULT 0")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        # 6. parse_status/parse_error — статус конвертации документа в .md
+        # (parsed/failed/skipped). Нужно UI-бейджу "не распарсилось" и для debugging.
+        try:
+            conn.execute("SELECT parse_status FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                conn.execute("ALTER TABLE documents ADD COLUMN parse_status TEXT DEFAULT 'skipped'")
+                conn.execute("ALTER TABLE documents ADD COLUMN parse_error TEXT DEFAULT ''")
                 conn.commit()
             except sqlite3.OperationalError:
                 pass

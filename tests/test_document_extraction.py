@@ -82,12 +82,8 @@ def test_malformed_block_no_closing_fence_is_ignored():
     assert cleaned == text
 
 
-@pytest.mark.xfail(
-    reason="Известное ограничение: non-greedy regex останавливается на первом ::: "
-    "внутри code fence, путая границы блока документа."
-)
 def test_triple_colon_inside_code_fence_not_confused():
-    """Содержимое документа содержит ::: внутри примера кода."""
+    """Fix 3.2A: state-machine игнорирует `:::` внутри ``` code fence."""
     text = (
         ":::document:guide.md\n"
         "Example:\n"
@@ -100,3 +96,35 @@ def test_triple_colon_inside_code_fence_not_confused():
     cleaned, docs = extract_documents(text)
     assert len(docs) == 1
     assert "End of guide" in docs[0]["content"]
+    assert docs[0]["filename"] == "guide.md"
+    # Проверяем что ```-заграждение внутри content сохранилось
+    assert "```" in docs[0]["content"]
+    # После удаления блока из текста — пусто (ничего кроме блока не было)
+    assert cleaned == ""
+
+
+def test_multiple_blocks_with_code_fences():
+    """Несколько документов, в одном — пример с ::: внутри fence."""
+    text = (
+        "intro\n"
+        ":::document:first.md\n"
+        "Example:\n"
+        "```\n"
+        ":::\n"
+        "```\n"
+        "first body\n"
+        ":::\n"
+        "middle\n"
+        ":::document:second.md\n"
+        "second body\n"
+        ":::\n"
+        "outro"
+    )
+    cleaned, docs = extract_documents(text)
+    assert len(docs) == 2
+    assert docs[0]["filename"] == "first.md"
+    assert "first body" in docs[0]["content"]
+    assert "```" in docs[0]["content"]
+    assert docs[1]["filename"] == "second.md"
+    assert docs[1]["content"] == "second body"
+    assert "intro" in cleaned and "middle" in cleaned and "outro" in cleaned

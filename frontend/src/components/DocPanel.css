@@ -433,6 +433,32 @@
   opacity: 0.7;
 }
 
+/* Бейдж "парсинг не удался" — ⚠ рядом с именем файла */
+.doc-item__parse-warn {
+  display: inline-block;
+  margin-left: 6px;
+  color: #f59e0b;
+  font-size: 12px;
+  cursor: help;
+  vertical-align: baseline;
+}
+
+/* Бейдж "парсинг в процессе" — ⏳ рядом с именем файла (Fix 4.1A) */
+.doc-item__parse-pending {
+  display: inline-block;
+  margin-left: 6px;
+  color: #64748b;
+  font-size: 12px;
+  cursor: help;
+  vertical-align: baseline;
+  animation: doc-pending-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes doc-pending-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 /* Индекс */
 .doc-item__index {
   font-size: 12px;

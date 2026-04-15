@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from worker.executor import CodexExecutor, PROJECT_ROOT
+from worker.base_executor import BaseExecutor, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,11 @@ _NATIVE_MIME_TYPES = {
 }
 
 
-class GeminiExecutor(CodexExecutor):
+class GeminiExecutor(BaseExecutor):
     """Executor для Gemini API через Google Generative AI."""
 
     def __init__(self, task_timeout: int = 600):
-        super().__init__(codex_binary="codex", task_timeout=task_timeout)
+        super().__init__(task_timeout=task_timeout)
         self._cancelled = False
 
     def cancel(self) -> None:

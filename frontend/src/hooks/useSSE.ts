@@ -168,6 +168,21 @@ export function useSSE() {
       }
     })
 
+    // Fix 4.1A: парсинг upload'а завершился — обновляем parse_status в списке документов
+    es.addEventListener('document_parsed', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data) as {
+          id: string
+          project_id: string
+          parse_status: 'parsed' | 'failed' | 'skipped' | 'pending'
+          parse_error?: string
+        }
+        useStore.getState().updateDocumentParseStatus(data.id, data.parse_status, data.parse_error)
+      } catch (err) {
+        console.warn('SSE document_parsed parse error:', err)
+      }
+    })
+
     // Remote config обновлён на сервере — применяем + показываем всплывашку
     es.addEventListener('remote_config_updated', (e: MessageEvent) => {
       try {

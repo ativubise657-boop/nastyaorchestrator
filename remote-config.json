@@ -1,6 +1,6 @@
 {
-  "version": 4,
-  "updated_at": "2026-04-14T07:30:00Z",
+  "version": 5,
+  "updated_at": "2026-04-15T11:50:00Z",
   "header_emoji": "🚀",
-  "notes": "v4: gemini_api_key вынесен из git — теперь в .secrets.json (прошивается в .exe через GitHub Secret GEMINI_API_KEY)"
+  "notes": "v5: gemini_api_key выпилен — тестируем парсинг PDF через GPT-5 без прямого Gemini"
 }

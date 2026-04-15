@@ -390,7 +390,9 @@ async def queue_next(request: Request):
     # Документы проекта — нумерованный список
     # Содержимое включаем ТОЛЬКО для конкретного запрошенного документа
     doc_rows = state.fetchall(
-        "SELECT id, filename, path, size, content_type FROM documents WHERE project_id = ? ORDER BY created_at DESC LIMIT 50",
+        "SELECT id, filename, path, size, content_type, "
+        "COALESCE(parse_status, 'skipped') AS parse_status "
+        "FROM documents WHERE project_id = ? ORDER BY created_at DESC LIMIT 50",
         (project_id,),
     )
     if doc_rows:
@@ -412,48 +414,37 @@ async def queue_next(request: Request):
                 requested_by_name = i + 1  # 1-based
                 break
 
-        # 3) Ключевые слова = хочет работать с документами (без конкретного)
-        wants_docs = any(kw in prompt_lower for kw in [
-            "документ", "файл", "csv", "xlsx", "pdf", "загружен",
-            "посмотри", "прочитай", "открой", "проанализируй",
-            "прикреплён", "прикрепл", "сотрудник", "таблиц", "изображен",
-        ])
-
-        # Если нет конкретного номера/имени, но wants_docs и всего 1 документ — берём его
+        # Issue 2.1C: убрана эвристика wants_docs (magic keyword list).
+        # Теперь все документы проекта прокидываются в промпт как listing
+        # (имя, размер, parse_status). Content подгружается ТОЛЬКО если документ
+        # явно приложен (attachment) или упомянут по #номер/имени — модель видит
+        # "папку" и сама просит нужный файл, если Настя не отметила его явно.
         target_num = requested_num or requested_by_name
-        if not target_num and wants_docs and len(doc_rows) == 1:
-            target_num = 1
 
-        binary_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg",
-                       ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".rar", ".7z",
-                       ".mp3", ".mp4", ".avi", ".mov"}
+        from backend.core.file_types import is_image as _is_image
 
         docs = []
         for i, d in enumerate(doc_rows):
-            doc_num = i + 1  # 1-based нумерация
+            doc_num = i + 1
             doc_info: dict = {
                 "num": doc_num,
                 "filename": d["filename"],
                 "size": d["size"],
                 "path": d["path"],
                 "content_type": d["content_type"],
+                "parse_status": d["parse_status"],
             }
 
             # Документ считается запрошенным если:
             # 1) явно приложен к сообщению (attachment_document_ids)
-            # 2) ИЛИ упомянут в промпте по #номер/имени/ключевым словам
+            # 2) ИЛИ упомянут в промпте по #номер/имени
             is_attached = str(d["id"]) in attached_ids
             is_target = is_attached or (target_num == doc_num)
-            fname_lower = d["filename"].lower()
-            is_image = any(fname_lower.endswith(ext) for ext in
-                          (".png", ".jpg", ".jpeg", ".gif", ".webp"))
 
             if is_target:
-                if is_image:
-                    # Изображения передаём для base64
+                if _is_image(d["filename"]):
                     doc_info["requested"] = True
                 else:
-                    # Пробуем получить текстовое содержимое (из .md кеша или напрямую)
                     from backend.api.documents import _get_text_content
                     text = _get_text_content(d["path"], d["filename"])
                     if text:
@@ -471,7 +462,7 @@ async def queue_next(request: Request):
         from backend.api.settings import _load_sandbox
         task["codex_sandbox"] = _load_sandbox(state)
     except Exception:
-        task["codex_sandbox"] = "workspace-write"
+        task["codex_sandbox"] = "danger-full-access"
 
     # Папки документов — передаём имена для контекста создания документов
     folder_rows = state.fetchall(

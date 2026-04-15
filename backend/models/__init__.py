@@ -109,6 +109,8 @@ class Document(BaseModel):
     size: int
     content_type: str
     folder_id: Optional[str] = None
+    parse_status: str = 'skipped'  # parsed | failed | skipped
+    parse_error: str = ''
     created_at: datetime
 
 
