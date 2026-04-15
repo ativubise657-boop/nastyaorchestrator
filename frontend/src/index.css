@@ -177,3 +177,53 @@ input[type="radio"] {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
+/* Shimmer-текст в стиле Gemini — голубой/зелёный/жёлтый/розовый пробегают
+   по тексту на приглушённом базовом цвете. Применяется для "ИИ думает..."
+   и других loading-состояний. */
+:root { --shimmer-base: rgba(226, 232, 240, 0.55); }
+html.light { --shimmer-base: rgba(30, 41, 59, 0.55); }
+
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--shimmer-base) 0%,
+    var(--shimmer-base) 19%,
+    #7bacf8 23%,
+    #7bacf8 27%,
+    var(--shimmer-base) 31%,
+    var(--shimmer-base) 37%,
+    #5ec47a 41%,
+    #5ec47a 45%,
+    var(--shimmer-base) 49%,
+    var(--shimmer-base) 55%,
+    #fcd462 59%,
+    #fcd462 63%,
+    var(--shimmer-base) 67%,
+    var(--shimmer-base) 71%,
+    #e8b8b5 75%,
+    #e8b8b5 79%,
+    var(--shimmer-base) 83%,
+    var(--shimmer-base) 100%
+  );
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-slide 2.8s linear infinite;
+  font-weight: 500;
+}
+
+@keyframes shimmer-slide {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text {
+    animation: none;
+    color: var(--shimmer-base);
+    -webkit-text-fill-color: var(--shimmer-base);
+  }
+}

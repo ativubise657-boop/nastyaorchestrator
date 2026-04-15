@@ -346,7 +346,7 @@ function ThinkingTimer({ phase, model, hasGitHub }: {
   } else if (overdue) {
     label = 'Ещё немного...'
   } else {
-    label = 'Codex думает...'
+    label = 'ИИ думает...'
   }
 
   // Таймер
@@ -357,7 +357,7 @@ function ThinkingTimer({ phase, model, hasGitHub }: {
   return (
     <div className={`chat-panel__thinking ${phase ? 'chat-panel__thinking--github' : ''} ${overdue ? 'chat-panel__thinking--overdue' : ''}`}>
       <div className="chat-panel__thinking-dot" />
-      <span>{label}</span>
+      <span className="shimmer-text">{label}</span>
       <span className="chat-panel__thinking-timer">{timerText}</span>
     </div>
   )
