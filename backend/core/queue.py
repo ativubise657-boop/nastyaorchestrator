@@ -9,6 +9,7 @@
 """
 import json
 import logging
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 
@@ -19,6 +20,31 @@ logger = logging.getLogger(__name__)
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _attached_docs_ready(conn: sqlite3.Connection, attached_ids_json: str) -> bool:
+    """True если все прикреплённые документы уже распарсены (не pending).
+
+    Пустой attached — тривиально True. Это позволяет задаче попасть в worker
+    только когда BackgroundTask парсинга (Gemini OCR картинок/PDF) завершился,
+    чтобы модель получила content в промпте, а не пустой listing.
+    """
+    if not attached_ids_json:
+        return True
+    try:
+        ids = json.loads(attached_ids_json)
+    except (json.JSONDecodeError, ValueError):
+        return True  # мусор в поле — не блокируем задачу, пусть идёт
+    if not ids:
+        return True
+    placeholders = ",".join("?" for _ in ids)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS pending FROM documents "
+        f"WHERE id IN ({placeholders}) "
+        f"AND COALESCE(parse_status, 'skipped') = 'pending'",
+        tuple(ids),
+    ).fetchone()
+    return (row["pending"] if row else 0) == 0
 
 
 class TaskQueue:
@@ -64,42 +90,54 @@ class TaskQueue:
 
     def dequeue(self) -> dict | None:
         """
-        Атомарно берёт первую queued-задачу и переводит её в running.
-        Возвращает словарь с данными задачи или None, если очередь пуста.
+        Атомарно берёт первую queued-задачу, чьи прикреплённые документы уже
+        распарсены, и переводит её в running. Если первая queued ждёт парсинга
+        документов — пропускает её до следующего polling-цикла воркера.
+
+        Возвращает словарь с данными задачи или None, если все queued либо пусты,
+        либо все ждут parse_status != 'pending' (тогда worker придёт снова).
         """
-        # Блокируем таблицу через BEGIN IMMEDIATE, чтобы два worker-а
-        # не схватили одну и ту же задачу
         conn = self._state.conn
-        # Завершаем неявную транзакцию Python sqlite3 перед BEGIN IMMEDIATE
         try:
             conn.execute("COMMIT")
         except Exception:
             pass
         conn.execute("BEGIN IMMEDIATE")
         try:
-            row = conn.execute(
+            # Перебираем по возрасту; для каждой проверяем, завершён ли парсинг
+            # attached_document_ids. Если есть pending — пропускаем до след раза.
+            cursor = conn.execute(
                 """
-                SELECT id, project_id, prompt, mode, model, created_at
+                SELECT id, project_id, prompt, mode, model, created_at,
+                       COALESCE(attachment_document_ids, '') AS attached_ids
                 FROM tasks
                 WHERE status = 'queued'
                 ORDER BY created_at ASC
-                LIMIT 1
                 """
-            ).fetchone()
+            )
+            chosen: sqlite3.Row | None = None
+            for row in cursor:
+                if _attached_docs_ready(conn, row["attached_ids"]):
+                    chosen = row
+                    break
+                logger.info(
+                    "Задача %s ждёт парсинга прикреплённых документов — пропускаем до след polling",
+                    row["id"],
+                )
 
-            if row is None:
+            if chosen is None:
                 conn.execute("ROLLBACK")
                 return None
 
             now = _now_iso()
             conn.execute(
                 "UPDATE tasks SET status = 'running', started_at = ? WHERE id = ?",
-                (now, row["id"]),
+                (now, chosen["id"]),
             )
             conn.execute("COMMIT")
-            logger.info("Задача %s передана в работу", row["id"])
-            # Возвращаем задачу уже с актуальным статусом running
-            result = dict(row)
+            logger.info("Задача %s передана в работу", chosen["id"])
+            result = dict(chosen)
+            result.pop("attached_ids", None)  # служебное поле, не отдаём воркеру
             result["status"] = "running"
             result["started_at"] = now
             return result
