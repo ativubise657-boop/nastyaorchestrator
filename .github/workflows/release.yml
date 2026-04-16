@@ -183,8 +183,10 @@ jobs:
           $sigFile = Get-ChildItem -Path release-artifacts -Filter *.nsis.zip.sig | Select-Object -First 1
 
           if (-not $zipFile -or -not $sigFile) {
-            Write-Warning "nsis.zip or .sig not found — updater latest.json will be skipped (билд без TAURI_SIGNING_PRIVATE_KEY?)"
-            exit 0
+            Write-Error "❌ nsis.zip или .sig не найдены — Tauri не подписал updater-артефакты."
+            Write-Error "Вероятная причина: TAURI_SIGNING_PRIVATE_KEY / _PASSWORD в GitHub Secrets невалидны."
+            Write-Error "Локально проверь связку: .\scripts\setup-signing.ps1"
+            exit 1
           }
 
           $signature = Get-Content -Path $sigFile.FullName -Raw
@@ -205,6 +207,26 @@ jobs:
           $manifest | ConvertTo-Json -Depth 10 | Out-File -Encoding utf8 release-artifacts/latest.json
           Write-Host "Generated latest.json:"
           Get-Content release-artifacts/latest.json
+
+      - name: Verify updater artifacts (release tags only)
+        # Release без updater-артефактов ломает авто-обновление у Насти.
+        # Lesson #13 — fail-fast вместо silent skip.
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path release-artifacts -Filter *.nsis.zip -ErrorAction SilentlyContinue | Select-Object -First 1
+          $sig = Get-ChildItem -Path release-artifacts -Filter *.nsis.zip.sig -ErrorAction SilentlyContinue | Select-Object -First 1
+          $json = Get-ChildItem -Path release-artifacts -Filter latest.json -ErrorAction SilentlyContinue | Select-Object -First 1
+          $missing = @()
+          if (-not $zip)  { $missing += ".nsis.zip" }
+          if (-not $sig)  { $missing += ".nsis.zip.sig" }
+          if (-not $json) { $missing += "latest.json" }
+          if ($missing.Count -gt 0) {
+            Write-Error "❌ Отсутствуют updater-артефакты: $($missing -join ', ')"
+            Write-Error "Tauri auto-updater не заработает. Проверь TAURI_SIGNING_PRIVATE_KEY / _PASSWORD."
+            exit 1
+          }
+          Write-Host "✓ Updater-артефакты: $($zip.Name), $($sig.Name), $($json.Name)"
 
       - name: Generate SHA256 checksums
         shell: pwsh
