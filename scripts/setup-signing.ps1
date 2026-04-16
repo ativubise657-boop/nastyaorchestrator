@@ -149,7 +149,12 @@ if (-not $NoBuild) {
 
     Push-Location (Join-Path $projectRoot "src-tauri")
     try {
-        cargo tauri build 2>&1 | Tee-Object -Variable buildLog
+        # $ErrorActionPreference=Stop + перенаправление stderr ломаются на cargo info-
+        # сообщениях. Отключаем Stop на время нативного вызова, проверяем по $LASTEXITCODE.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        cargo tauri build
+        $ErrorActionPreference = $prevEAP
         if ($LASTEXITCODE -ne 0) {
             Fail "Локальный билд упал (код $LASTEXITCODE). Проверь что keypair + пароль совпадают."
         }
