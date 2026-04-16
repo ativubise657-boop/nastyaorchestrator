@@ -104,10 +104,12 @@ if (-not (Test-Path $pubPath)) {
     Fail "Публичный ключ не создан по пути $pubPath"
 }
 
-# Чтение содержимого .pub файла как UTF-8, затем base64
-$pubBytes = [IO.File]::ReadAllBytes($pubPath)
-$pubKeyB64 = [Convert]::ToBase64String($pubBytes)
-Write-Host "✓ Публичный ключ: $($pubKeyB64.Substring(0, [Math]::Min(60, $pubKeyB64.Length)))..."
+# Файл .pub уже содержит base64-кодированный minisign-текст. Tauri сам декодирует
+# значение pubkey из конфига, так что в tauri.conf.json должно лежать СОДЕРЖИМОЕ
+# файла как есть — иначе получаем двойной base64 и парсер падает с
+# "Missing encoded key in public key".
+$pubKeyContent = ([IO.File]::ReadAllText($pubPath)).Trim()
+Write-Host "✓ Публичный ключ: $($pubKeyContent.Substring(0, [Math]::Min(60, $pubKeyContent.Length)))..."
 
 # 2. Обновление pubkey в tauri.conf.json
 Write-Step "Обновляю pubkey в tauri.conf.json"
@@ -116,7 +118,7 @@ if (-not $conf.plugins.updater) {
     Fail "В tauri.conf.json отсутствует plugins.updater — проверь конфиг"
 }
 $oldPub = $conf.plugins.updater.pubkey
-$conf.plugins.updater.pubkey = $pubKeyB64
+$conf.plugins.updater.pubkey = $pubKeyContent
 
 # В PowerShell 5.1 -Encoding utf8 = UTF-8 с BOM, а Tauri JSON-парсер падает на BOM
 # ("expected value at line 1 column 1"). Пишем байтами через .NET → чистый UTF-8.
@@ -126,7 +128,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 Write-Host "✓ pubkey заменён"
 Write-Host "  старый: $($oldPub.Substring(0, [Math]::Min(40, $oldPub.Length)))..."
-Write-Host "  новый:  $($pubKeyB64.Substring(0, [Math]::Min(40, $pubKeyB64.Length)))..."
+Write-Host "  новый:  $($pubKeyContent.Substring(0, [Math]::Min(40, $pubKeyContent.Length)))..."
 
 # 3. Приватник → буфер (как есть, НЕ base64)
 # Файл nastya.key уже содержит base64-кодированный minisign-текст. Tauri v2 сам
