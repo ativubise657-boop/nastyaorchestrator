@@ -128,12 +128,15 @@ Write-Host "✓ pubkey заменён"
 Write-Host "  старый: $($oldPub.Substring(0, [Math]::Min(40, $oldPub.Length)))..."
 Write-Host "  новый:  $($pubKeyB64.Substring(0, [Math]::Min(40, $pubKeyB64.Length)))..."
 
-# 3. Приватник → base64 → буфер
-Write-Step "Приватник → base64 → буфер обмена"
-$privBytes = [IO.File]::ReadAllBytes($KeyPath)
-$privB64 = [Convert]::ToBase64String($privBytes)
-Set-Clipboard -Value $privB64
-Write-Host "✓ В буфере, длина $($privB64.Length) символов"
+# 3. Приватник → буфер (как есть, НЕ base64)
+# Файл nastya.key уже содержит base64-кодированный minisign-текст. Tauri v2 сам
+# декодирует base64 из env-переменной, поэтому передавать надо СОДЕРЖИМОЕ файла,
+# а не ToBase64String(ReadAllBytes) — иначе получаем двойной base64 и парсер
+# minisign падает с "Missing encoded key in secret key".
+Write-Step "Приватник → буфер обмена"
+$privContent = [IO.File]::ReadAllText($KeyPath)
+Set-Clipboard -Value $privContent
+Write-Host "✓ В буфере, длина $($privContent.Length) символов"
 Write-Host ""
 Write-Host "→ Обнови GitHub Secret:" -ForegroundColor Yellow
 Write-Host "  https://github.com/ativubise657-boop/nastyaorchestrator/settings/secrets/actions"
@@ -145,7 +148,7 @@ if (-not $NoBuild) {
     Write-Step "Тестовая локальная сборка (cargo tauri build)"
     Write-Host "Проверяем что связка keypair + пароль работает..." -ForegroundColor Yellow
 
-    $env:TAURI_SIGNING_PRIVATE_KEY = $privB64
+    $env:TAURI_SIGNING_PRIVATE_KEY = $privContent
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $Password
 
     Push-Location (Join-Path $projectRoot "src-tauri")
