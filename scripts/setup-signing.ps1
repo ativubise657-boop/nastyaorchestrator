@@ -118,10 +118,11 @@ if (-not $conf.plugins.updater) {
 $oldPub = $conf.plugins.updater.pubkey
 $conf.plugins.updater.pubkey = $pubKeyB64
 
-# Сохранение с отступом 2 (ближе к исходному форматированию)
-$conf | ConvertTo-Json -Depth 20 | Set-Content $confPath -Encoding utf8 -NoNewline
-# Добавляем финальный newline (npm/git любят)
-Add-Content -Path $confPath -Value "" -Encoding utf8
+# В PowerShell 5.1 -Encoding utf8 = UTF-8 с BOM, а Tauri JSON-парсер падает на BOM
+# ("expected value at line 1 column 1"). Пишем байтами через .NET → чистый UTF-8.
+$json = ($conf | ConvertTo-Json -Depth 20) + "`n"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllBytes($confPath, $utf8NoBom.GetBytes($json))
 
 Write-Host "✓ pubkey заменён"
 Write-Host "  старый: $($oldPub.Substring(0, [Math]::Min(40, $oldPub.Length)))..."
