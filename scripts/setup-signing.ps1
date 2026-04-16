@@ -111,20 +111,21 @@ if (-not (Test-Path $pubPath)) {
 $pubKeyContent = ([IO.File]::ReadAllText($pubPath)).Trim()
 Write-Host "✓ Публичный ключ: $($pubKeyContent.Substring(0, [Math]::Min(60, $pubKeyContent.Length)))..."
 
-# 2. Обновление pubkey в tauri.conf.json
+# 2. Обновление pubkey в tauri.conf.json (точечная regex-замена)
+# ConvertFrom-Json → ConvertTo-Json переформатирует весь файл (другой indent,
+# двойные пробелы и т.д.) → огромный шумный diff. Меняем только значение pubkey.
 Write-Step "Обновляю pubkey в tauri.conf.json"
-$conf = Get-Content $confPath -Raw | ConvertFrom-Json
-if (-not $conf.plugins.updater) {
-    Fail "В tauri.conf.json отсутствует plugins.updater — проверь конфиг"
+$confRaw = [IO.File]::ReadAllText($confPath)
+if ($confRaw -notmatch '"pubkey"\s*:\s*"([^"]*)"') {
+    Fail "В tauri.conf.json не найден plugins.updater.pubkey — проверь конфиг"
 }
-$oldPub = $conf.plugins.updater.pubkey
-$conf.plugins.updater.pubkey = $pubKeyContent
-
-# В PowerShell 5.1 -Encoding utf8 = UTF-8 с BOM, а Tauri JSON-парсер падает на BOM
-# ("expected value at line 1 column 1"). Пишем байтами через .NET → чистый UTF-8.
-$json = ($conf | ConvertTo-Json -Depth 20) + "`n"
+$oldPub = $Matches[1]
+$pattern = '("pubkey"\s*:\s*")[^"]*(")'
+$replacement = '${1}' + $pubKeyContent + '${2}'
+$patched = [regex]::Replace($confRaw, $pattern, $replacement, 1)
+# UTF-8 без BOM — Tauri JSON-парсер падает на BOM ("expected value at line 1 column 1")
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[IO.File]::WriteAllBytes($confPath, $utf8NoBom.GetBytes($json))
+[IO.File]::WriteAllBytes($confPath, $utf8NoBom.GetBytes($patched))
 
 Write-Host "✓ pubkey заменён"
 Write-Host "  старый: $($oldPub.Substring(0, [Math]::Min(40, $oldPub.Length)))..."
