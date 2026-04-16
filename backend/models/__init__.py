@@ -109,8 +109,9 @@ class Document(BaseModel):
     size: int
     content_type: str
     folder_id: Optional[str] = None
-    parse_status: str = 'skipped'  # parsed | failed | skipped
+    parse_status: str = 'skipped'  # parsed | failed | skipped | pending
     parse_error: str = ''
+    parse_method: str = ''  # markitdown | pdfminer | aitunnel_gemini | cache
     created_at: datetime
 
 

@@ -204,10 +204,11 @@ def test_convert_markitdown_wins_if_returns_text(tmp_path):
     with patch.object(docs_mod, "_try_markitdown", return_value="from md"):
         with patch.object(docs_mod, "_try_pdfminer", side_effect=lambda *a: pdfminer_called.append(1)):
             with patch.object(docs_mod, "_try_aitunnel_pdf", side_effect=lambda *a: aitunnel_called.append(1)):
-                out = docs_mod._convert_to_text(pdf, "a.pdf")
+                out, method = docs_mod._convert_to_text(pdf, "a.pdf")
 
     assert out is not None
     assert out.read_text(encoding="utf-8") == "from md"
+    assert method == "markitdown"
     assert pdfminer_called == [] and aitunnel_called == []
 
 
@@ -220,10 +221,11 @@ def test_convert_fallback_to_pdfminer_when_md_fails(tmp_path):
     with patch.object(docs_mod, "_try_markitdown", return_value=None):
         with patch.object(docs_mod, "_try_pdfminer", return_value="pdfminer text"):
             with patch.object(docs_mod, "_try_aitunnel_pdf", side_effect=lambda *a: aitunnel_called.append(1)):
-                out = docs_mod._convert_to_text(pdf, "a.pdf")
+                out, method = docs_mod._convert_to_text(pdf, "a.pdf")
 
     assert out is not None
     assert out.read_text(encoding="utf-8") == "pdfminer text"
+    assert method == "pdfminer"
     assert aitunnel_called == []
 
 
@@ -235,10 +237,11 @@ def test_convert_fallback_to_aitunnel_when_both_fail(tmp_path):
     with patch.object(docs_mod, "_try_markitdown", return_value=None):
         with patch.object(docs_mod, "_try_pdfminer", return_value=None):
             with patch.object(docs_mod, "_try_aitunnel_pdf", return_value="ai ocr text"):
-                out = docs_mod._convert_to_text(pdf, "a.pdf")
+                out, method = docs_mod._convert_to_text(pdf, "a.pdf")
 
     assert out is not None
     assert out.read_text(encoding="utf-8") == "ai ocr text"
+    assert method == "aitunnel_gemini"
 
 
 def test_convert_all_fail_returns_none(tmp_path):
@@ -249,9 +252,10 @@ def test_convert_all_fail_returns_none(tmp_path):
     with patch.object(docs_mod, "_try_markitdown", return_value=None):
         with patch.object(docs_mod, "_try_pdfminer", return_value=None):
             with patch.object(docs_mod, "_try_aitunnel_pdf", return_value=None):
-                out = docs_mod._convert_to_text(pdf, "a.pdf")
+                out, method = docs_mod._convert_to_text(pdf, "a.pdf")
 
     assert out is None
+    assert method == ""
     assert not (tmp_path / "a.md").exists()
 
 
@@ -265,18 +269,31 @@ def test_convert_docx_no_pdfminer_fallback(tmp_path):
     with patch.object(docs_mod, "_try_markitdown", return_value=None):
         with patch.object(docs_mod, "_try_pdfminer", side_effect=lambda *a: pdfminer_called.append(1)):
             with patch.object(docs_mod, "_try_aitunnel_pdf", side_effect=lambda *a: aitunnel_called.append(1)):
-                out = docs_mod._convert_to_text(docx, "doc.docx")
+                out, method = docs_mod._convert_to_text(docx, "doc.docx")
 
     assert out is None
+    assert method == ""
     assert pdfminer_called == [] and aitunnel_called == []
 
 
 def test_convert_unsupported_ext_returns_none(tmp_path):
-    """Не конвертируемый формат (.zip) — возвращает None без попыток."""
+    """Не конвертируемый формат (.zip) — возвращает (None, '') без попыток."""
     z = tmp_path / "x.zip"
     z.write_bytes(b"PK")
-    out = docs_mod._convert_to_text(z, "x.zip")
+    out, method = docs_mod._convert_to_text(z, "x.zip")
     assert out is None
+    assert method == ""
+
+
+def test_convert_image_uses_aitunnel_method(tmp_path):
+    """PNG/JPG: парсинг через AITunnel Gemini, method='aitunnel_gemini'."""
+    img = tmp_path / "screen.png"
+    img.write_bytes(b"fake-png")
+    with patch.object(docs_mod, "_try_aitunnel_image", return_value="описание картинки"):
+        out, method = docs_mod._convert_to_text(img, "screen.png")
+    assert out is not None
+    assert out.read_text(encoding="utf-8") == "описание картинки"
+    assert method == "aitunnel_gemini"
 
 
 # ============================================================================
@@ -287,10 +304,11 @@ def test_parse_status_parsed(tmp_path):
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"x")
     with patch.object(docs_mod, "_try_markitdown", return_value="ok"):
-        md_path, status, error = docs_mod._parse_and_status(pdf, "a.pdf")
+        md_path, status, error, method = docs_mod._parse_and_status(pdf, "a.pdf")
 
     assert status == "parsed"
     assert error == ""
+    assert method == "markitdown"
     assert md_path is not None and md_path.exists()
 
 
@@ -300,21 +318,34 @@ def test_parse_status_failed(tmp_path):
     with patch.object(docs_mod, "_try_markitdown", return_value=None):
         with patch.object(docs_mod, "_try_pdfminer", return_value=None):
             with patch.object(docs_mod, "_try_aitunnel_pdf", return_value=None):
-                md_path, status, error = docs_mod._parse_and_status(pdf, "a.pdf")
+                md_path, status, error, method = docs_mod._parse_and_status(pdf, "a.pdf")
 
     assert status == "failed"
     assert "markitdown" in error.lower() or "парсер" in error.lower()
+    assert method == ""
     assert md_path is None
 
 
 def test_parse_status_skipped(tmp_path):
-    """Формат не поддерживается (.zip, .png) → skipped, без попытки."""
+    """Формат не поддерживается (.zip) → skipped, без попытки."""
     z = tmp_path / "x.zip"
     z.write_bytes(b"PK")
-    md_path, status, error = docs_mod._parse_and_status(z, "x.zip")
+    md_path, status, error, method = docs_mod._parse_and_status(z, "x.zip")
     assert status == "skipped"
     assert error == ""
+    assert method == ""
     assert md_path is None
+
+
+def test_parse_status_image_goes_through_aitunnel(tmp_path):
+    """PNG: попадает в parse_and_status как convertible через image-ветку."""
+    img = tmp_path / "screen.png"
+    img.write_bytes(b"fake-png")
+    with patch.object(docs_mod, "_try_aitunnel_image", return_value="описание"):
+        md_path, status, error, method = docs_mod._parse_and_status(img, "screen.png")
+    assert status == "parsed"
+    assert method == "aitunnel_gemini"
+    assert md_path is not None
 
 
 def test_parse_status_failed_on_unexpected_exception(tmp_path):
@@ -322,9 +353,10 @@ def test_parse_status_failed_on_unexpected_exception(tmp_path):
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"x")
     with patch.object(docs_mod, "_convert_to_text", side_effect=RuntimeError("surprise")):
-        md_path, status, error = docs_mod._parse_and_status(pdf, "a.pdf")
+        md_path, status, error, method = docs_mod._parse_and_status(pdf, "a.pdf")
 
     assert status == "failed"
     assert "RuntimeError" in error
     assert "surprise" in error
+    assert method == ""
     assert md_path is None

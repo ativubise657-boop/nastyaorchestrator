@@ -82,28 +82,18 @@ def _try_aitunnel_image(file_path: Path, filename: str) -> str | None:
     return None
 
 
-def _convert_to_text(file_path: Path, filename: str) -> Path | None:
-    """Конвертирует документ в markdown при загрузке. Сохраняет .md файл рядом.
+def _convert_to_text(file_path: Path, filename: str) -> tuple[Path | None, str]:
+    """Конвертирует документ в markdown при загрузке. Возвращает (md_path, method).
 
-    Fix 4.2A: перед каскадом — check content-hash кеша. Тот же документ
-    второй раз → мгновенный cache hit без вызова парсеров/API.
-
-    Каскад для PDF:
-      1. markitdown (быстро, локально, text-layer PDF)
-      2. pdfminer напрямую (иногда работает где markitdown-обёртка падает)
-      3. AITunnel → Gemini 2.5 Flash (OCR для сканов)
-
-    Для DOCX/XLSX/PPTX/HTML: только markitdown.
-    Для PNG/JPG/WebP/GIF: AITunnel/Gemini описание (text of screenshot + OCR).
-
-    Возвращает путь к .md файлу или None если ни один уровень не сработал.
+    method: '' если не удалось | 'cache' | 'markitdown' | 'pdfminer' | 'aitunnel_gemini'.
+    UI показывает бейдж с методом — Настя видит чем распарсили её файл.
     """
     from backend.core import parse_cache
 
     ext = Path(filename).suffix.lower()
     is_image = ext in IMAGE_EXTS
     if ext not in CONVERTIBLE_EXTENSIONS and not is_image:
-        return None
+        return (None, "")
 
     text_path = file_path.with_suffix(".md")
 
@@ -112,7 +102,7 @@ def _convert_to_text(file_path: Path, filename: str) -> Path | None:
     if cached:
         text_path.write_text(cached, encoding="utf-8")
         logger.info("Документ %s → cache hit (%d символов)", filename, len(cached))
-        return text_path
+        return (text_path, "cache")
 
     # Для изображений — сразу AITunnel (markitdown/pdfminer не работают на бинарниках картинок)
     if is_image:
@@ -121,9 +111,9 @@ def _convert_to_text(file_path: Path, filename: str) -> Path | None:
             text_path.write_text(text, encoding="utf-8")
             parse_cache.put(file_path, text)
             logger.info("Image %s → AITunnel/Gemini (%d символов)", filename, len(text))
-            return text_path
+            return (text_path, "aitunnel_gemini")
         logger.warning("AITunnel/Gemini не смог описать %s — content пустой", filename)
-        return None
+        return (None, "")
 
     # Уровень 1: markitdown
     text = _try_markitdown(file_path, filename)
@@ -131,12 +121,12 @@ def _convert_to_text(file_path: Path, filename: str) -> Path | None:
         text_path.write_text(text, encoding="utf-8")
         parse_cache.put(file_path, text)
         logger.info("Документ %s → markitdown (%d символов)", filename, len(text))
-        return text_path
+        return (text_path, "markitdown")
 
     # Дальше только PDF — для DOCX/XLSX/HTML других парсеров нет
     if ext != ".pdf":
         logger.warning("Не удалось распарсить %s (формат %s, fallback'ов нет)", filename, ext)
-        return None
+        return (None, "")
 
     # Уровень 2: pdfminer
     text = _try_pdfminer(file_path, filename)
@@ -144,7 +134,7 @@ def _convert_to_text(file_path: Path, filename: str) -> Path | None:
         text_path.write_text(text, encoding="utf-8")
         parse_cache.put(file_path, text)
         logger.info("PDF %s → pdfminer (%d символов)", filename, len(text))
-        return text_path
+        return (text_path, "pdfminer")
 
     # Уровень 3: AITunnel → Gemini (OCR)
     text = _try_aitunnel_pdf(file_path, filename)
@@ -152,37 +142,35 @@ def _convert_to_text(file_path: Path, filename: str) -> Path | None:
         text_path.write_text(text, encoding="utf-8")
         parse_cache.put(file_path, text)
         logger.info("PDF %s → AITunnel/Gemini (%d символов)", filename, len(text))
-        return text_path
+        return (text_path, "aitunnel_gemini")
 
     logger.warning("Все 3 парсера упали на PDF %s — content пустой", filename)
-    return None
+    return (None, "")
 
 
-def _parse_and_status(file_path: Path, filename: str) -> tuple[Path | None, str, str]:
-    """Парсит документ и возвращает (md_path|None, parse_status, parse_error).
+def _parse_and_status(file_path: Path, filename: str) -> tuple[Path | None, str, str, str]:
+    """Парсит документ и возвращает (md_path|None, parse_status, parse_error, parse_method).
 
-    parse_status:
-      - 'parsed'  — текст/описание извлечены, .md файл создан
-      - 'failed'  — конвертируемый формат/image, но парсинг упал (content=None)
-      - 'skipped' — формат не поддерживается (zip, mp4, ...) — парсить и не пытались
+    parse_status: parsed | failed | skipped
+    parse_method: cache | markitdown | pdfminer | aitunnel_gemini | '' (при failed/skipped)
     """
     ext = Path(filename).suffix.lower()
     supported = ext in CONVERTIBLE_EXTENSIONS or ext in IMAGE_EXTS
     if not supported:
-        return (None, 'skipped', '')
+        return (None, 'skipped', '', '')
     try:
-        text_path = _convert_to_text(file_path, filename)
+        text_path, method = _convert_to_text(file_path, filename)
         if text_path:
-            return (text_path, 'parsed', '')
+            return (text_path, 'parsed', '', method)
         reason = (
             'AITunnel/Gemini не описал изображение (нет AITUNNEL_API_KEY или ошибка API)'
             if ext in IMAGE_EXTS
             else 'Ни один парсер не смог извлечь текст (markitdown → pdfminer → AITunnel)'
         )
-        return (None, 'failed', reason)
+        return (None, 'failed', reason, '')
     except Exception as e:
         logger.exception("Непойманное исключение при парсинге %s", filename)
-        return (None, 'failed', f"{type(e).__name__}: {e}"[:500])
+        return (None, 'failed', f"{type(e).__name__}: {e}"[:500], '')
 
 
 def _get_text_content(file_path: str, filename: str) -> str | None:
@@ -233,6 +221,7 @@ async def list_all_documents(request: Request):
         SELECT id, project_id, filename, path, size, content_type, folder_id,
                COALESCE(parse_status, 'skipped') AS parse_status,
                COALESCE(parse_error, '') AS parse_error,
+               COALESCE(parse_method, '') AS parse_method,
                created_at
         FROM documents
         ORDER BY created_at DESC
@@ -268,6 +257,7 @@ async def list_documents(project_id: str, request: Request):
         SELECT id, project_id, filename, path, size, content_type, folder_id,
                COALESCE(parse_status, 'skipped') AS parse_status,
                COALESCE(parse_error, '') AS parse_error,
+               COALESCE(parse_method, '') AS parse_method,
                created_at
         FROM documents
         WHERE project_id = ? AND COALESCE(is_scratch, 0) = 0
@@ -293,8 +283,9 @@ async def _background_parse(
     здесь гоняем каскад парсинга в thread-pool, обновляем БД, пушим SSE event.
     Ошибки ловим — background task не должен падать и тянуть за собой процесс."""
     loop = asyncio.get_event_loop()
+    method = ""
     try:
-        text_path, status, error = await loop.run_in_executor(
+        text_path, status, error, method = await loop.run_in_executor(
             None, _parse_and_status, file_path, filename
         )
     except Exception as exc:  # noqa: BLE001
@@ -304,8 +295,8 @@ async def _background_parse(
     # UPDATE БД — если документ удалили параллельно, просто логируем
     try:
         app_state.db.execute(
-            "UPDATE documents SET parse_status = ?, parse_error = ? WHERE id = ?",
-            (status, error, doc_id),
+            "UPDATE documents SET parse_status = ?, parse_error = ?, parse_method = ? WHERE id = ?",
+            (status, error, method, doc_id),
         )
         app_state.db.commit()
     except Exception as exc:  # noqa: BLE001
@@ -320,14 +311,15 @@ async def _background_parse(
                 "project_id": project_id,
                 "parse_status": status,
                 "parse_error": error,
+                "parse_method": method,
             },
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("background_parse SSE publish failed: %s", exc)
 
     logger.info(
-        "Фоновый парсинг %s: status=%s, filename=%s",
-        doc_id, status, filename,
+        "Фоновый парсинг %s: status=%s, method=%s, filename=%s",
+        doc_id, status, method or "-", filename,
     )
 
 

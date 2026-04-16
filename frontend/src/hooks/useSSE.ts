@@ -176,8 +176,11 @@ export function useSSE() {
           project_id: string
           parse_status: 'parsed' | 'failed' | 'skipped' | 'pending'
           parse_error?: string
+          parse_method?: 'cache' | 'markitdown' | 'pdfminer' | 'aitunnel_gemini' | ''
         }
-        useStore.getState().updateDocumentParseStatus(data.id, data.parse_status, data.parse_error)
+        useStore.getState().updateDocumentParseStatus(
+          data.id, data.parse_status, data.parse_error, data.parse_method,
+        )
       } catch (err) {
         console.warn('SSE document_parsed parse error:', err)
       }

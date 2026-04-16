@@ -289,6 +289,15 @@ function DocItem({
                   ⚠
                 </span>
               )}
+              {doc.parse_status === 'parsed' && doc.parse_method === 'aitunnel_gemini' && (
+                <span
+                  className="doc-item__parse-gemini"
+                  title="Распарсил Gemini 2.5 Flash (AITunnel) — OCR/описание картинки"
+                  aria-label="Распарсил Gemini Flash"
+                >
+                  ✨
+                </span>
+              )}
             </span>
           )}
           <span className="doc-item__meta">

@@ -98,6 +98,7 @@ export interface Document {
   content?: string
   parse_status?: 'parsed' | 'failed' | 'skipped' | 'pending'
   parse_error?: string
+  parse_method?: 'cache' | 'markitdown' | 'pdfminer' | 'aitunnel_gemini' | ''
 }
 
 export type DocViewMode = 'project' | 'all'
@@ -199,7 +200,7 @@ interface AppStore {
   moveDocument: (projectId: string, docId: string, folderId: string | null) => Promise<void>
   selectDocument: (id: string | null) => void
   loadDocumentContent: (projectId: string, docId: string) => Promise<string>
-  updateDocumentParseStatus: (docId: string, parseStatus: Document['parse_status'], parseError?: string) => void
+  updateDocumentParseStatus: (docId: string, parseStatus: Document['parse_status'], parseError?: string, parseMethod?: Document['parse_method']) => void
 
   // Папки
   folders: Folder[]
@@ -791,11 +792,16 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   // Fix 4.1A: обновление parse_status через SSE event document_parsed
-  updateDocumentParseStatus: (docId, parseStatus, parseError) =>
+  updateDocumentParseStatus: (docId, parseStatus, parseError, parseMethod) =>
     set((state) => ({
       documents: state.documents.map((d) =>
         d.id === docId
-          ? { ...d, parse_status: parseStatus, parse_error: parseError ?? '' }
+          ? {
+              ...d,
+              parse_status: parseStatus,
+              parse_error: parseError ?? '',
+              parse_method: parseMethod ?? d.parse_method ?? '',
+            }
           : d
       ),
     })),

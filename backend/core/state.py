@@ -78,6 +78,7 @@ class State:
         folder_id    TEXT,
         parse_status TEXT DEFAULT 'skipped',
         parse_error  TEXT DEFAULT '',
+        parse_method TEXT DEFAULT '',
         created_at   TEXT NOT NULL,
         FOREIGN KEY (folder_id) REFERENCES folders(id)
     );
@@ -220,6 +221,17 @@ class State:
             try:
                 conn.execute("ALTER TABLE documents ADD COLUMN parse_status TEXT DEFAULT 'skipped'")
                 conn.execute("ALTER TABLE documents ADD COLUMN parse_error TEXT DEFAULT ''")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        # 7. parse_method — каким инструментом распарсили документ
+        # (markitdown/pdfminer/aitunnel_gemini/cache). UI показывает бейдж,
+        # Настя видит что её картинка ушла в Gemini Flash.
+        try:
+            conn.execute("SELECT parse_method FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                conn.execute("ALTER TABLE documents ADD COLUMN parse_method TEXT DEFAULT ''")
                 conn.commit()
             except sqlite3.OperationalError:
                 pass

@@ -443,6 +443,16 @@
   vertical-align: baseline;
 }
 
+/* Бейдж "распарсил Gemini Flash" — ✨ рядом с именем файла */
+.doc-item__parse-gemini {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 12px;
+  cursor: help;
+  vertical-align: baseline;
+  filter: drop-shadow(0 0 3px rgba(123, 172, 248, 0.6));
+}
+
 /* Бейдж "парсинг в процессе" — ⏳ рядом с именем файла (Fix 4.1A) */
 .doc-item__parse-pending {
   display: inline-block;
