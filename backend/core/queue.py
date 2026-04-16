@@ -37,10 +37,10 @@ def _attached_docs_ready(conn: sqlite3.Connection, attached_ids_json: str) -> bo
         return True  # мусор в поле — не блокируем задачу, пусть идёт
     if not ids:
         return True
-    placeholders = ",".join("?" for _ in ids)
+    qmarks = ",".join("?" for _ in ids)
     row = conn.execute(
         f"SELECT COUNT(*) AS pending FROM documents "
-        f"WHERE id IN ({placeholders}) "
+        f"WHERE id IN ({qmarks}) "
         f"AND COALESCE(parse_status, 'skipped') = 'pending'",
         tuple(ids),
     ).fetchone()
