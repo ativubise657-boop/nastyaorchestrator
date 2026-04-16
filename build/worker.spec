@@ -50,7 +50,7 @@ datas = [
     (str(ROOT / "config" / "models.json"), "config"),
 ]
 
-# .secrets.json — GEMINI_API_KEY и другие секреты, прошиваются в .exe.
+# .secrets.json — AITUNNEL_API_KEY (Gemini Flash OCR) и другие секреты, прошиваются в .exe.
 # Файл в .gitignore. В CI создаётся из GitHub Secrets (см. release.yml).
 # Локально — ручная копия из .secrets.json.example.
 _secrets_file = ROOT / ".secrets.json"
