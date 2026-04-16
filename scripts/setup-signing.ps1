@@ -168,14 +168,15 @@ if (-not $NoBuild) {
         Pop-Location
     }
 
-    # Проверка updater-артефактов
+    # Проверка updater-артефактов. Tauri v2 для NSIS target генерит -setup.exe
+    # и -setup.exe.sig (старый формат .nsis.zip больше не используется).
     $bundleDir = Join-Path $projectRoot "src-tauri\target\release\bundle\nsis"
-    $zipExists = Get-ChildItem -Path $bundleDir -Filter "*.nsis.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
-    $sigExists = Get-ChildItem -Path $bundleDir -Filter "*.nsis.zip.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $exeExists = Get-ChildItem -Path $bundleDir -Filter "*-setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $sigExists = Get-ChildItem -Path $bundleDir -Filter "*-setup.exe.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-    if ($zipExists -and $sigExists) {
+    if ($exeExists -and $sigExists) {
         Write-Host "✓ Updater-артефакты сгенерированы:" -ForegroundColor Green
-        Write-Host "  $($zipExists.Name)"
+        Write-Host "  $($exeExists.Name)"
         Write-Host "  $($sigExists.Name)"
     } else {
         Fail "Updater-артефакты отсутствуют несмотря на успешный билд. Проверь createUpdaterArtifacts=true в tauri.conf.json."
