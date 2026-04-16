@@ -213,6 +213,31 @@ def test_env_api_key_used_when_not_passed(tmp_path, monkeypatch):
     assert captured["auth"] == "Bearer from-env"
 
 
+def test_parse_image_uses_image_mime(tmp_path):
+    """parse_image отправляет картинку с корректным image/<ext> mime."""
+    img = tmp_path / "screen.png"
+    img.write_bytes(b"fake-png-bytes")
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "На скриншоте кнопка Sign up"}}]},
+        )
+
+    with _mock_client(handler):
+        out = aitunnel_pdf.parse_image(img, api_key="k")
+
+    assert out == "На скриншоте кнопка Sign up"
+    parts = captured["body"]["messages"][0]["content"]
+    img_part = next(p for p in parts if p.get("type") == "image_url")
+    assert img_part["image_url"]["url"].startswith("data:image/png;base64,")
+    text_part = next(p for p in parts if p.get("type") == "text")
+    # Prompt для image — просит описание картинки, не «преобразуй PDF»
+    assert "изображ" in text_part["text"].lower() or "скриншот" in text_part["text"].lower()
+
+
 def test_prompt_text_in_request(tmp_path):
     """В body должен быть PROMPT — инструкция 'преобразуй в markdown'."""
     pdf = _make_pdf(tmp_path)

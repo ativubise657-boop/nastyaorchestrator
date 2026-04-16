@@ -12,7 +12,11 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFi
 from fastapi.responses import FileResponse, Response
 
 from backend.core.config import DOCUMENTS_DIR
-from backend.core.file_types import CONVERTIBLE_EXTS as CONVERTIBLE_EXTENSIONS, TEXT_EXTS
+from backend.core.file_types import (
+    CONVERTIBLE_EXTS as CONVERTIBLE_EXTENSIONS,
+    IMAGE_EXTS,
+    TEXT_EXTS,
+)
 from backend.core.helpers import ensure_project, now_iso, COMMON_PROJECT
 from backend.models import Document, DocumentCreate, Folder, FolderCreate, FolderRename, DocumentMove, DocumentRename
 
@@ -60,24 +64,45 @@ def _try_aitunnel_pdf(file_path: Path, filename: str) -> str | None:
     return None
 
 
+def _try_aitunnel_image(file_path: Path, filename: str) -> str | None:
+    """AITunnel/Gemini описание изображения (OCR + description).
+
+    Для картинок markitdown/pdfminer не работают. Gemini Flash даёт
+    качественное описание + извлечённый текст — модель в промпте увидит
+    содержимое скриншота даже если Codex CLI без vision.
+    """
+    try:
+        from backend.core.aitunnel_pdf import parse_image
+        text = parse_image(file_path)
+        if text and text.strip():
+            return text
+        logger.info("AITunnel/Gemini не описал %s", filename)
+    except Exception as e:
+        logger.warning("AITunnel/Gemini ошибка для %s: %s", filename, e)
+    return None
+
+
 def _convert_to_text(file_path: Path, filename: str) -> Path | None:
     """Конвертирует документ в markdown при загрузке. Сохраняет .md файл рядом.
 
-    Fix 4.2A: перед каскадом — check content-hash кеша. Тот же PDF загружен
+    Fix 4.2A: перед каскадом — check content-hash кеша. Тот же документ
     второй раз → мгновенный cache hit без вызова парсеров/API.
 
     Каскад для PDF:
       1. markitdown (быстро, локально, text-layer PDF)
       2. pdfminer напрямую (иногда работает где markitdown-обёртка падает)
-      3. AITunnel → Gemini 2.5 Flash (OCR для сканов, таблицы, формулы)
+      3. AITunnel → Gemini 2.5 Flash (OCR для сканов)
 
-    Для остальных (xlsx, docx, pptx, html): только markitdown.
+    Для DOCX/XLSX/PPTX/HTML: только markitdown.
+    Для PNG/JPG/WebP/GIF: AITunnel/Gemini описание (text of screenshot + OCR).
+
     Возвращает путь к .md файлу или None если ни один уровень не сработал.
     """
     from backend.core import parse_cache
 
     ext = Path(filename).suffix.lower()
-    if ext not in CONVERTIBLE_EXTENSIONS:
+    is_image = ext in IMAGE_EXTS
+    if ext not in CONVERTIBLE_EXTENSIONS and not is_image:
         return None
 
     text_path = file_path.with_suffix(".md")
@@ -88,6 +113,17 @@ def _convert_to_text(file_path: Path, filename: str) -> Path | None:
         text_path.write_text(cached, encoding="utf-8")
         logger.info("Документ %s → cache hit (%d символов)", filename, len(cached))
         return text_path
+
+    # Для изображений — сразу AITunnel (markitdown/pdfminer не работают на бинарниках картинок)
+    if is_image:
+        text = _try_aitunnel_image(file_path, filename)
+        if text:
+            text_path.write_text(text, encoding="utf-8")
+            parse_cache.put(file_path, text)
+            logger.info("Image %s → AITunnel/Gemini (%d символов)", filename, len(text))
+            return text_path
+        logger.warning("AITunnel/Gemini не смог описать %s — content пустой", filename)
+        return None
 
     # Уровень 1: markitdown
     text = _try_markitdown(file_path, filename)
@@ -126,22 +162,24 @@ def _parse_and_status(file_path: Path, filename: str) -> tuple[Path | None, str,
     """Парсит документ и возвращает (md_path|None, parse_status, parse_error).
 
     parse_status:
-      - 'parsed'  — текст извлечён, .md файл создан
-      - 'failed'  — конвертируемый формат, но все парсеры упали (content=None)
-      - 'skipped' — формат не поддерживается (png, jpg, zip, ...) — парсить и не пытались
+      - 'parsed'  — текст/описание извлечены, .md файл создан
+      - 'failed'  — конвертируемый формат/image, но парсинг упал (content=None)
+      - 'skipped' — формат не поддерживается (zip, mp4, ...) — парсить и не пытались
     """
     ext = Path(filename).suffix.lower()
-    if ext not in CONVERTIBLE_EXTENSIONS:
+    supported = ext in CONVERTIBLE_EXTENSIONS or ext in IMAGE_EXTS
+    if not supported:
         return (None, 'skipped', '')
     try:
         text_path = _convert_to_text(file_path, filename)
         if text_path:
             return (text_path, 'parsed', '')
-        return (
-            None,
-            'failed',
-            'Ни один парсер не смог извлечь текст (markitdown → pdfminer → AITunnel)',
+        reason = (
+            'AITunnel/Gemini не описал изображение (нет AITUNNEL_API_KEY или ошибка API)'
+            if ext in IMAGE_EXTS
+            else 'Ни один парсер не смог извлечь текст (markitdown → pdfminer → AITunnel)'
         )
+        return (None, 'failed', reason)
     except Exception as e:
         logger.exception("Непойманное исключение при парсинге %s", filename)
         return (None, 'failed', f"{type(e).__name__}: {e}"[:500])
@@ -346,10 +384,11 @@ async def upload_document(
     content_type = file.content_type or ""
 
     # Fix 4.1A: начальный parse_status зависит от формата.
-    # Конвертируемый (PDF/DOCX/...) → pending (парсер отработает в фоне).
-    # Остальное (png/zip/...) → skipped сразу, background не нужен.
+    # Конвертируемый (PDF/DOCX/...) + Image (PNG/JPG/WebP/GIF) → pending
+    # (парсер отработает в фоне — AITunnel/Gemini опишет картинку).
+    # Остальное (zip/mp4/...) → skipped сразу, background не нужен.
     ext = Path(original_name).suffix.lower()
-    if ext in CONVERTIBLE_EXTENSIONS:
+    if ext in CONVERTIBLE_EXTENSIONS or ext in IMAGE_EXTS:
         initial_status, initial_error = "pending", ""
     else:
         initial_status, initial_error = "skipped", ""

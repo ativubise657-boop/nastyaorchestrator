@@ -210,7 +210,16 @@ class BaseExecutor:
             parse_failed = doc.get("parse_status") == "failed"
 
             if ext in IMAGE_EXTENSIONS and doc.get("requested"):
-                doc_parts.append(f"#{num} {fname} (изображение прикреплено к первому сообщению)")
+                if content:
+                    # Gemini распарсил картинку → кладём текстовое описание в промпт.
+                    # Модель читает это без vision-режима. Если у CLI есть vision,
+                    # она также увидит саму картинку через --image флаг.
+                    doc_parts.append(
+                        f"#{num} {fname} (изображение; текстовое описание ниже,"
+                        f" сам файл также прикреплён):\n```\n{content}\n```"
+                    )
+                else:
+                    doc_parts.append(f"#{num} {fname} (изображение прикреплено к первому сообщению)")
             elif content:
                 doc_parts.append(f"#{num} {fname}:\n```\n{content}\n```")
             elif doc.get("requested"):

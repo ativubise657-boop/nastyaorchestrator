@@ -1,21 +1,22 @@
-"""Парсинг PDF через AITunnel → Gemini 2.5 Flash.
+"""Парсинг PDF и описание изображений через AITunnel → Gemini 2.5 Flash.
 
 OpenAI-совместимый endpoint AITunnel `/v1/chat/completions` с моделью
-`gemini-2.5-flash`. PDF передаётся как multimodal part `image_url` с
-data-URL `data:application/pdf;base64,...` — AITunnel проксирует это в
-нативный формат Gemini (`inline_data`).
+`gemini-2.5-flash`. Документ передаётся как multimodal part `image_url` с
+data-URL `data:<mime>;base64,...` — AITunnel проксирует в нативный формат
+Gemini (`inline_data`).
 
-Преимущества каскадного уровня (markitdown/pdfminer → AITunnel):
-  - OCR для сканированных PDF (без локального Tesseract)
-  - Таблицы с мерджами, формулы, рукописный текст
-  - Единый ключ AITUNNEL_API_KEY — не плодим ещё один provider
+Почему через AITunnel а не напрямую:
+  - единый ключ AITUNNEL_API_KEY — не плодим ещё один provider
+  - OCR сканированных PDF без локального Tesseract
+  - описание картинок когда Codex CLI без vision (gpt-5.3-codex, gpt-5.4)
 
-Ключ из env AITUNNEL_API_KEY (грузится через .env в backend/core/config.py).
+Ключ из env AITUNNEL_API_KEY (грузится через .env / .secrets.json / БД).
 """
 from __future__ import annotations
 
 import base64
 import logging
+import mimetypes
 import os
 from pathlib import Path
 
@@ -28,7 +29,7 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 FALLBACK_MODEL = "gemini-2.0-flash"
 MAX_INLINE_BYTES = 20 * 1024 * 1024  # 20 МБ — лимит inline_data Gemini
 
-PROMPT = (
+PDF_PROMPT = (
     "Преобразуй содержимое этого PDF в чистый Markdown.\n"
     "Сохрани заголовки, списки, таблицы (| разделители), ссылки.\n"
     "Изображения опиши в [описание]. Формулы в $...$.\n"
@@ -36,34 +37,50 @@ PROMPT = (
     "Верни только чистый markdown-текст."
 )
 
+IMAGE_PROMPT = (
+    "Опиши подробно что изображено на этом скриншоте/картинке.\n"
+    "Если там есть текст — приведи его дословно с форматированием.\n"
+    "Если это UI/интерфейс — опиши элементы и что на них написано.\n"
+    "Если это схема/диаграмма/график — опиши структуру, подписи и связи.\n"
+    "Если это фото — опиши что на нём (объекты, люди, действия, место).\n"
+    "Верни результат в markdown. Без вводных фраз вроде «На этой картинке»."
+)
 
-def parse_pdf(
+
+def _describe(
     file_path: Path,
-    api_key: str | None = None,
-    base_url: str | None = None,
+    *,
+    mime_type: str,
+    prompt: str,
+    api_key: str | None,
+    base_url: str | None,
 ) -> str | None:
-    """Парсит PDF через AITunnel (Gemini). Возвращает markdown или None при ошибке."""
+    """Универсальный вызов AITunnel/Gemini для описания бинарного документа.
+
+    Поддерживает любой mime что Gemini принимает в inline_data
+    (application/pdf, image/png, image/jpeg, image/webp, image/gif).
+    """
     api_key = api_key or os.getenv("AITUNNEL_API_KEY", "")
     if not api_key:
-        logger.warning("AITUNNEL_API_KEY не задан — PDF через AITunnel не распарсить")
+        logger.warning("AITUNNEL_API_KEY не задан — %s через AITunnel не обработать", mime_type)
         return None
 
     base_url = (base_url or os.getenv("AITUNNEL_BASE_URL", DEFAULT_BASE_URL)).rstrip("/")
-    pdf_bytes = file_path.read_bytes()
-    if len(pdf_bytes) > MAX_INLINE_BYTES:
+    file_bytes = file_path.read_bytes()
+    if len(file_bytes) > MAX_INLINE_BYTES:
         logger.warning(
-            "PDF слишком большой (%.1f МБ > 20 МБ), Gemini не примет",
-            len(pdf_bytes) / 1_000_000,
+            "%s слишком большой (%.1f МБ > 20 МБ), Gemini не примет",
+            mime_type, len(file_bytes) / 1_000_000,
         )
         return None
 
-    data_url = f"data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode('ascii')}"
+    data_url = f"data:{mime_type};base64,{base64.b64encode(file_bytes).decode('ascii')}"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     body_base = {
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "text", "text": PROMPT},
+                {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": data_url}},
             ],
         }],
@@ -93,7 +110,6 @@ def parse_pdf(
                 continue
 
             content = choices[0].get("message", {}).get("content", "")
-            # Некоторые провайдеры возвращают content как list-of-parts
             if isinstance(content, list):
                 content = "".join(
                     p.get("text", "") for p in content if isinstance(p, dict)
@@ -104,7 +120,8 @@ def parse_pdf(
                 continue
 
             logger.info(
-                "PDF распарсен через AITunnel/%s (%d символов)", model, len(content)
+                "%s распарсен через AITunnel/%s (%d символов)",
+                mime_type, model, len(content),
             )
             return content
 
@@ -116,3 +133,40 @@ def parse_pdf(
             continue
 
     return None
+
+
+def parse_pdf(
+    file_path: Path,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> str | None:
+    """Парсит PDF через AITunnel (Gemini). Возвращает markdown или None при ошибке."""
+    return _describe(
+        file_path,
+        mime_type="application/pdf",
+        prompt=PDF_PROMPT,
+        api_key=api_key,
+        base_url=base_url,
+    )
+
+
+def parse_image(
+    file_path: Path,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> str | None:
+    """Описывает изображение (PNG/JPG/WebP/GIF) через AITunnel Gemini.
+
+    Используется когда Codex CLI без vision: в промпт кладётся text-описание,
+    модель видит содержимое скриншота как текст.
+    """
+    mime_type = mimetypes.guess_type(file_path.name)[0] or "image/png"
+    if not mime_type.startswith("image/"):
+        mime_type = "image/png"
+    return _describe(
+        file_path,
+        mime_type=mime_type,
+        prompt=IMAGE_PROMPT,
+        api_key=api_key,
+        base_url=base_url,
+    )
