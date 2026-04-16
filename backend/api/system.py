@@ -442,16 +442,22 @@ async def queue_next(request: Request):
             is_target = is_attached or (target_num == doc_num)
 
             if is_target:
+                # Подгружаем Gemini/markitdown-описание из .md рядом — и для image, и для PDF/DOCX.
+                # Раньше image-ветка пропускала _get_text_content → модель видела только
+                # "(прикреплено)" без содержимого. Теперь image с parse_status=parsed
+                # даёт в промпте text-описание от Gemini Flash.
+                from backend.api.documents import _get_text_content
+                text = _get_text_content(d["path"], d["filename"])
+                if text:
+                    doc_info["content"] = text
                 if _is_image(d["filename"]):
+                    # image ВСЕГДА requested=True (Codex с vision увидит через --image,
+                    # и текстовое описание тоже будет в промпте — двойная подстраховка)
                     doc_info["requested"] = True
-                else:
-                    from backend.api.documents import _get_text_content
-                    text = _get_text_content(d["path"], d["filename"])
-                    if text:
-                        doc_info["content"] = text
-                    else:
-                        doc_info["note"] = f"Запрошен ({d['content_type'] or 'binary'})"
-                        doc_info["requested"] = True
+                elif not text:
+                    # не-image без content — честная ветка "не распарсилось" (1.1A)
+                    doc_info["note"] = f"Запрошен ({d['content_type'] or 'binary'})"
+                    doc_info["requested"] = True
 
             docs.append(doc_info)
         task["documents"] = docs
