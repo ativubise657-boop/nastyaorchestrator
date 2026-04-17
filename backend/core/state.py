@@ -168,7 +168,10 @@ class State:
         if not hasattr(self._local, "conn") or self._local.conn is None:
             conn = sqlite3.connect(self._db_path, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
+            # busy_timeout=30000 (30 сек) — для стабильности под нагрузкой с async wrappers.
+            # На Windows SQLite менее прощающий к параллельным writers из thread pool,
+            # 5 сек (прежний дефолт) давал database is locked в CI тестах.
+            conn.execute("PRAGMA busy_timeout=30000")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.row_factory = sqlite3.Row
             self._local.conn = conn
