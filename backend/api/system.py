@@ -101,7 +101,8 @@ def _parse_iso_to_unix(ts: str | None) -> int:
         return 0
     try:
         return int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-    except Exception:
+    except Exception as exc:
+        logger.debug("system: не удалось распарсить ISO timestamp %r: %s", ts, exc)
         return 0
 
 
@@ -152,7 +153,8 @@ def _load_statusline_from_sessions() -> dict:
         for path in files:
             try:
                 lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-            except Exception:
+            except Exception as exc:
+                logger.debug("system: не удалось прочитать sessions файл %s: %s", path.name, exc)
                 continue
 
             for line in reversed(lines):
@@ -160,7 +162,8 @@ def _load_statusline_from_sessions() -> dict:
                     continue
                 try:
                     event = _json.loads(line)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("system: JSON parse error в %s: %s", path.name, exc)
                     continue
 
                 payload = event.get("payload", {})
@@ -182,7 +185,8 @@ def _load_statusline_from_sessions() -> dict:
         _sl_sessions_signature = signature
         _sl_sessions_cache = {}
         return {}
-    except Exception:
+    except Exception as exc:
+        logger.debug("system: ошибка чтения sessions statusline, возвращаем кэш: %s", exc)
         return _sl_sessions_cache or {}
 
 
@@ -235,7 +239,8 @@ async def statusline():
         if _sl_cache:
             return _sl_cache
         return _load_statusline_from_sessions()
-    except Exception:
+    except Exception as exc:
+        logger.debug("system: ошибка чтения statusline файла, возвращаем кэш: %s", exc)
         return _sl_cache or _load_statusline_from_sessions() or {}
 
 
@@ -287,57 +292,73 @@ async def event_stream(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# GET /api/queue/next  — worker забирает задачу
+# Вспомогательные функции обогащения задачи контекстом (_enrich_*)
 # ---------------------------------------------------------------------------
 
-@router_queue.get("/next", dependencies=[Depends(verify_worker)])
-async def queue_next(request: Request):
+def _enrich_chat_history(state, task: dict) -> list[dict]:
     """
-    Атомарно берёт следующую queued-задачу и переводит в running.
-    Возвращает задачу или {task: null} если очередь пуста.
+    Возвращает последние 10 сообщений чата.
+    Основной путь: только текущая сессия (session-scoped изоляция).
+    Fallback для legacy-задач без session_id: последние 10 по проекту.
     """
-    queue = request.app.state.queue
-    state = request.app.state.db
-    task = queue.dequeue()
-
-    if task is None:
-        return {"task": None}
-
-    # Обогащаем задачу контекстом
     project_id = task["project_id"]
+    task_session_id = task.get("session_id")
 
-    # Последние 10 сообщений чата (в хронологическом порядке)
-    history_rows = state.fetchall(
-        """
-        SELECT role, content FROM chat_messages
-        WHERE project_id = ?
-        ORDER BY created_at DESC
-        LIMIT 10
-        """,
-        (project_id,),
-    )
-    task["chat_history"] = [
-        {"role": r["role"], "content": r["content"]} for r in reversed(history_rows)
-    ]
+    if task_session_id:
+        # Основной путь: история только текущей сессии
+        rows = state.fetchall(
+            """
+            SELECT role, content FROM chat_messages
+            WHERE session_id = ?
+            ORDER BY created_at ASC
+            LIMIT 10
+            """,
+            (task_session_id,),
+        )
+        return [{"role": r["role"], "content": r["content"]} for r in rows]
+    else:
+        # Fallback для legacy-задач без session_id (перенесённые данные, старые задачи)
+        rows = state.fetchall(
+            """
+            SELECT role, content FROM chat_messages
+            WHERE project_id = ?
+            ORDER BY created_at DESC
+            LIMIT 10
+            """,
+            (project_id,),
+        )
+        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
-    # Shared context — результаты последних завершённых задач проекта
-    # Даёт Codex понимание что уже было сделано/обсуждено
-    done_rows = state.fetchall(
+
+def _enrich_completed_tasks(state, task: dict) -> list[dict] | None:
+    """
+    Возвращает результаты последних 5 завершённых задач проекта.
+    Даёт Codex понимание что уже было сделано/обсуждено.
+    Возвращает None если завершённых задач нет.
+    """
+    rows = state.fetchall(
         """
         SELECT prompt, result FROM tasks
         WHERE project_id = ? AND status = 'completed' AND result IS NOT NULL
         ORDER BY completed_at DESC
         LIMIT 5
         """,
-        (project_id,),
+        (task["project_id"],),
     )
-    if done_rows:
-        task["completed_tasks"] = [
-            {"prompt": r["prompt"][:200], "result": r["result"][:800]}
-            for r in done_rows
-        ]
+    if not rows:
+        return None
+    return [{"prompt": r["prompt"][:200], "result": r["result"][:800]} for r in rows]
 
-    # Информация о проекте + path для Codex CLI
+
+def _enrich_project(state, task: dict) -> None:
+    """
+    Заполняет task["project"], task["project_path"], task["git_url"],
+    task["all_projects"] — данные проекта и связанных проектов.
+
+    Изменяет task на месте (несколько полей — нельзя вернуть одним значением).
+    Для "общего" проекта (без git_url) дополнительно прокидывает all_projects.
+    """
+    project_id = task["project_id"]
     proj_row = state.fetchone(
         "SELECT name, description, path, git_url FROM projects WHERE id = ?",
         (project_id,),
@@ -349,7 +370,9 @@ async def queue_next(request: Request):
     # project_path используется worker-ом для --cd Codex CLI
     if proj_row and proj_row["path"]:
         task["project_path"] = proj_row["path"]
+
     # git_url для read-only контекста через GitHub API
+    git_url = ""
     if proj_row:
         git_url = proj_row["git_url"] if "git_url" in proj_row.keys() else ""
         if git_url:
@@ -366,122 +389,204 @@ async def queue_next(request: Request):
                 for r in all_rows
             ]
 
-    # Папка документов проекта — передаём всегда, чтобы Codex мог читать её
-    # через --add-dir даже если конкретный файл не прикреплён к сообщению.
+
+def _enrich_documents_dir(task: dict) -> None:
+    """
+    Заполняет task["documents_dir"] — путь к папке документов проекта.
+    Передаётся worker-у чтобы Codex мог читать папку через --add-dir
+    даже если конкретный файл не прикреплён к сообщению.
+    Изменяет task на месте (условная установка одного поля).
+    """
     from backend.core.config import DOCUMENTS_DIR
     import os as _os
-    _docs_dir = _os.path.join(DOCUMENTS_DIR, project_id)
-    if _os.path.isdir(_docs_dir):
-        task["documents_dir"] = _docs_dir
+    docs_dir = _os.path.join(DOCUMENTS_DIR, task["project_id"])
+    if _os.path.isdir(docs_dir):
+        task["documents_dir"] = docs_dir
 
-    # Документы, явно приложенные к этому сообщению — автоматически requested.
-    # Читаются из tasks.attachment_document_ids (записано в chat.py при /send).
+
+def _enrich_documents(state, task: dict) -> list[dict]:
+    """
+    Возвращает список документов проекта с метаданными.
+
+    Гибридная выборка: session-scoped + project-wide.
+    Если есть session_id: документы текущей сессии + project-wide (session_id IS NULL).
+    Если нет session_id (legacy): только project-wide.
+
+    Content подгружается только для явно запрошенных документов:
+    1) attachment_document_ids из задачи
+    2) упомянут в промпте по #номер или имени файла
+    Остальные передаются как listing (имя, размер, статус) — модель сама запросит нужное.
+    """
+    import re
+    import json as _json
+    from backend.core.file_types import is_image as _is_image
+    from backend.api.documents import _get_text_content
+
+    project_id = task["project_id"]
+    task_session_id = task.get("session_id")
+
+    # Выбираем документы с учётом scope сессии
+    if task_session_id:
+        doc_rows = state.fetchall(
+            "SELECT id, filename, path, size, content_type, session_id, "
+            "COALESCE(parse_status, 'skipped') AS parse_status "
+            "FROM documents WHERE project_id = ? "
+            "AND (session_id = ? OR session_id IS NULL) "
+            "ORDER BY created_at DESC LIMIT 50",
+            (project_id, task_session_id),
+        )
+    else:
+        doc_rows = state.fetchall(
+            "SELECT id, filename, path, size, content_type, session_id, "
+            "COALESCE(parse_status, 'skipped') AS parse_status "
+            "FROM documents WHERE project_id = ? ORDER BY created_at DESC LIMIT 50",
+            (project_id,),
+        )
+
+    if not doc_rows:
+        return []
+
+    # Документы, явно приложенные к этому сообщению (записаны в chat.py при /send)
     attached_ids: set[str] = set()
     try:
         raw_att = task.get("attachment_document_ids") or ""
         if raw_att:
-            import json as _json
-            parsed = _json.loads(raw_att)
-            if isinstance(parsed, list):
-                attached_ids = {str(x) for x in parsed if x}
+            parsed_att = _json.loads(raw_att)
+            if isinstance(parsed_att, list):
+                attached_ids = {str(x) for x in parsed_att if x}
     except (ValueError, TypeError):
         attached_ids = set()
 
-    # Документы проекта — нумерованный список
-    # Содержимое включаем ТОЛЬКО для конкретного запрошенного документа
-    doc_rows = state.fetchall(
-        "SELECT id, filename, path, size, content_type, "
-        "COALESCE(parse_status, 'skipped') AS parse_status "
-        "FROM documents WHERE project_id = ? ORDER BY created_at DESC LIMIT 50",
-        (project_id,),
-    )
-    if doc_rows:
-        import re
-        prompt_lower = task.get("prompt", "").lower()
+    # Определяем целевой документ по тексту промпта
+    prompt_lower = task.get("prompt", "").lower()
 
-        # Определяем какой документ запрошен
-        # 1) По номеру: "#1", "#2", "документ 3", "файл №2"
-        num_match = re.search(r'#(\d+)|(?:документ|файл|doc)\s*(?:№|#)?\s*(\d+)', prompt_lower)
-        requested_num = int(num_match.group(1) or num_match.group(2)) if num_match else None
+    # 1) По номеру: "#1", "#2", "документ 3", "файл №2"
+    num_match = re.search(r'#(\d+)|(?:документ|файл|doc)\s*(?:№|#)?\s*(\d+)', prompt_lower)
+    requested_num = int(num_match.group(1) or num_match.group(2)) if num_match else None
 
-        # 2) По имени файла в промпте
-        requested_by_name = None
-        for i, d in enumerate(doc_rows):
-            fname = d["filename"].lower()
-            # Ищем имя файла (с расширением или без) в промпте
-            name_no_ext = fname.rsplit(".", 1)[0] if "." in fname else fname
-            if fname in prompt_lower or name_no_ext in prompt_lower:
-                requested_by_name = i + 1  # 1-based
-                break
+    # 2) По имени файла в промпте
+    requested_by_name = None
+    for i, d in enumerate(doc_rows):
+        fname = d["filename"].lower()
+        name_no_ext = fname.rsplit(".", 1)[0] if "." in fname else fname
+        if fname in prompt_lower or name_no_ext in prompt_lower:
+            requested_by_name = i + 1  # 1-based
+            break
 
-        # Issue 2.1C: убрана эвристика wants_docs (magic keyword list).
-        # Теперь все документы проекта прокидываются в промпт как listing
-        # (имя, размер, parse_status). Content подгружается ТОЛЬКО если документ
-        # явно приложен (attachment) или упомянут по #номер/имени — модель видит
-        # "папку" и сама просит нужный файл, если Настя не отметила его явно.
-        target_num = requested_num or requested_by_name
+    # Issue 2.1C: убрана эвристика wants_docs (magic keyword list).
+    # Content подгружается только для явно запрошенного документа.
+    target_num = requested_num or requested_by_name
 
-        from backend.core.file_types import is_image as _is_image
+    docs = []
+    for i, d in enumerate(doc_rows):
+        doc_num = i + 1
+        doc_info: dict = {
+            "num": doc_num,
+            "filename": d["filename"],
+            "size": d["size"],
+            "path": d["path"],
+            "content_type": d["content_type"],
+            "parse_status": d["parse_status"],
+        }
 
-        docs = []
-        for i, d in enumerate(doc_rows):
-            doc_num = i + 1
-            doc_info: dict = {
-                "num": doc_num,
-                "filename": d["filename"],
-                "size": d["size"],
-                "path": d["path"],
-                "content_type": d["content_type"],
-                "parse_status": d["parse_status"],
-            }
+        # Документ считается запрошенным если:
+        # 1) явно приложен к сообщению (attachment_document_ids)
+        # 2) ИЛИ упомянут в промпте по #номер/имени
+        is_attached = str(d["id"]) in attached_ids
+        is_target = is_attached or (target_num == doc_num)
 
-            # Документ считается запрошенным если:
-            # 1) явно приложен к сообщению (attachment_document_ids)
-            # 2) ИЛИ упомянут в промпте по #номер/имени
-            is_attached = str(d["id"]) in attached_ids
-            is_target = is_attached or (target_num == doc_num)
+        if is_target:
+            # Подгружаем Gemini/markitdown-описание из .md рядом — и для image, и для PDF/DOCX.
+            # Раньше image-ветка пропускала _get_text_content → модель видела только
+            # "(прикреплено)" без содержимого. Теперь image с parse_status=parsed
+            # даёт в промпте text-описание от Gemini Flash.
+            text = _get_text_content(d["path"], d["filename"])
+            if text:
+                doc_info["content"] = text
+            if _is_image(d["filename"]):
+                # image ВСЕГДА requested=True (Codex с vision увидит через --image,
+                # и текстовое описание тоже будет в промпте — двойная подстраховка)
+                doc_info["requested"] = True
+            elif not text:
+                # не-image без content — честная ветка "не распарсилось" (1.1A)
+                doc_info["note"] = f"Запрошен ({d['content_type'] or 'binary'})"
+                doc_info["requested"] = True
 
-            if is_target:
-                # Подгружаем Gemini/markitdown-описание из .md рядом — и для image, и для PDF/DOCX.
-                # Раньше image-ветка пропускала _get_text_content → модель видела только
-                # "(прикреплено)" без содержимого. Теперь image с parse_status=parsed
-                # даёт в промпте text-описание от Gemini Flash.
-                from backend.api.documents import _get_text_content
-                text = _get_text_content(d["path"], d["filename"])
-                if text:
-                    doc_info["content"] = text
-                if _is_image(d["filename"]):
-                    # image ВСЕГДА requested=True (Codex с vision увидит через --image,
-                    # и текстовое описание тоже будет в промпте — двойная подстраховка)
-                    doc_info["requested"] = True
-                elif not text:
-                    # не-image без content — честная ветка "не распарсилось" (1.1A)
-                    doc_info["note"] = f"Запрошен ({d['content_type'] or 'binary'})"
-                    doc_info["requested"] = True
+        docs.append(doc_info)
 
-            docs.append(doc_info)
-        task["documents"] = docs
+    return docs
 
-    # Sandbox-режим Codex: прокидываем текущую настройку в задачу
-    # (worker передаст её в `--sandbox <mode>`).
+
+def _enrich_sandbox(state, task: dict) -> str:
+    """
+    Возвращает режим sandbox для Codex CLI.
+    Worker передаст значение в `--sandbox <mode>`.
+    При ошибке загрузки настроек — безопасный дефолт danger-full-access.
+    """
     try:
         from backend.api.settings import _load_sandbox
-        task["codex_sandbox"] = _load_sandbox(state)
-    except Exception:
-        task["codex_sandbox"] = "danger-full-access"
+        return _load_sandbox(state)
+    except Exception as exc:
+        logger.debug("system: не удалось загрузить sandbox настройки, используем danger-full-access: %s", exc)
+        return "danger-full-access"
 
-    # Папки документов — передаём имена для контекста создания документов
-    folder_rows = state.fetchall(
+
+def _enrich_doc_folders(state, task: dict) -> list[str] | None:
+    """
+    Возвращает список имён папок документов проекта.
+    Нужен Codex для контекста при создании документов.
+    Возвращает None если папок нет.
+    """
+    rows = state.fetchall(
         "SELECT name FROM folders WHERE project_id = ? ORDER BY name",
-        (project_id,),
+        (task["project_id"],),
     )
-    if folder_rows:
-        task["doc_folders"] = [r["name"] for r in folder_rows]
+    if not rows:
+        return None
+    return [r["name"] for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# GET /api/queue/next  — worker забирает задачу
+# ---------------------------------------------------------------------------
+
+@router_queue.get("/next", dependencies=[Depends(verify_worker)])
+async def queue_next(request: Request):
+    """
+    Атомарно берёт следующую queued-задачу и переводит в running.
+    Возвращает задачу с обогащённым контекстом или {task: null} если очередь пуста.
+    """
+    queue = request.app.state.queue
+    state = request.app.state.db
+    task = queue.dequeue()
+
+    if task is None:
+        return {"task": None}
+
+    # Обогащаем задачу контекстом — каждая функция независима
+    task["chat_history"] = _enrich_chat_history(state, task)
+
+    completed = _enrich_completed_tasks(state, task)
+    if completed:
+        task["completed_tasks"] = completed
+
+    _enrich_project(state, task)         # устанавливает project / project_path / git_url / all_projects
+    _enrich_documents_dir(task)          # устанавливает documents_dir если папка существует
+
+    documents = _enrich_documents(state, task)
+    if documents:
+        task["documents"] = documents
+
+    task["codex_sandbox"] = _enrich_sandbox(state, task)
+
+    doc_folders = _enrich_doc_folders(state, task)
+    if doc_folders:
+        task["doc_folders"] = doc_folders
 
     # Публикуем обновление статуса
     await request.app.state.publish_event(
         "task_update",
-        {"task_id": task["id"], "project_id": project_id, "status": "running"},
+        {"task_id": task["id"], "project_id": task["project_id"], "status": "running"},
     )
 
     logger.info("Worker забрал задачу %s (с контекстом: %d сообщений)", task["id"], len(task["chat_history"]))
