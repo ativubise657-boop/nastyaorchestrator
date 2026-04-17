@@ -187,8 +187,8 @@ def _get_text_content(file_path: str, filename: str) -> str | None:
     if md_path.exists():
         try:
             return md_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("documents: не удалось прочитать .md кэш %s, пробуем оригинал: %s", md_path.name, exc)
 
     # Текстовые файлы — читаем напрямую
     ext = Path(filename).suffix.lower()
@@ -197,8 +197,8 @@ def _get_text_content(file_path: str, filename: str) -> str | None:
             content = p.read_text(encoding="utf-8", errors="replace")
             if "\x00" not in content:
                 return content
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("documents: не удалось прочитать текстовый файл %s: %s", filename, exc)
 
     return None
 
@@ -216,7 +216,7 @@ def _project_dir(project_id: str) -> Path:
 async def list_all_documents(request: Request):
     """Все документы из всех проектов (включая __common__)."""
     state = request.app.state.db
-    rows = state.fetchall(
+    rows = await state.afetchall(
         """
         SELECT id, project_id, filename, path, size, content_type, folder_id,
                COALESCE(parse_status, 'skipped') AS parse_status,
@@ -227,7 +227,7 @@ async def list_all_documents(request: Request):
         ORDER BY created_at DESC
         """
     )
-    folders_rows = state.fetchall(
+    folders_rows = await state.afetchall(
         """
         SELECT id, project_id, name, parent_id, created_at
         FROM folders
@@ -245,26 +245,76 @@ async def list_all_documents(request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/{project_id}", response_model=list[Document])
-async def list_documents(project_id: str, request: Request):
-    """Список документов проекта."""
+async def list_documents(
+    project_id: str,
+    request: Request,
+    scope: str = "all",
+    session_id: str | None = None,
+):
+    """
+    Список документов проекта с фильтрацией по scope:
+    - all (default): все не-scratch документы проекта (backwards compat)
+    - session: session-scoped текущей сессии + project-wide (session_id обязателен)
+    - project: только project-wide (session_id IS NULL)
+    """
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    # Фильтруем scratch — это одноразовые картинки из буфера/drag&drop,
-    # не показываем их в списке документов проекта.
-    rows = state.fetchall(
-        """
-        SELECT id, project_id, filename, path, size, content_type, folder_id,
-               COALESCE(parse_status, 'skipped') AS parse_status,
-               COALESCE(parse_error, '') AS parse_error,
-               COALESCE(parse_method, '') AS parse_method,
-               created_at
-        FROM documents
-        WHERE project_id = ? AND COALESCE(is_scratch, 0) = 0
-        ORDER BY created_at DESC
-        """,
-        (project_id,),
-    )
+    if scope == "session":
+        # Нужен session_id для фильтрации session-scoped документов
+        if not session_id:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="session_id обязателен при scope=session")
+        rows = await state.afetchall(
+            """
+            SELECT id, project_id, filename, path, size, content_type, folder_id,
+                   COALESCE(parse_status, 'skipped') AS parse_status,
+                   COALESCE(parse_error, '') AS parse_error,
+                   COALESCE(parse_method, '') AS parse_method,
+                   created_at,
+                   session_id
+            FROM documents
+            WHERE project_id = ?
+              AND COALESCE(is_scratch, 0) = 0
+              AND (session_id = ? OR session_id IS NULL)
+            ORDER BY created_at DESC
+            """,
+            (project_id, session_id),
+        )
+    elif scope == "project":
+        # Только project-wide документы
+        rows = await state.afetchall(
+            """
+            SELECT id, project_id, filename, path, size, content_type, folder_id,
+                   COALESCE(parse_status, 'skipped') AS parse_status,
+                   COALESCE(parse_error, '') AS parse_error,
+                   COALESCE(parse_method, '') AS parse_method,
+                   created_at,
+                   session_id
+            FROM documents
+            WHERE project_id = ?
+              AND COALESCE(is_scratch, 0) = 0
+              AND session_id IS NULL
+            ORDER BY created_at DESC
+            """,
+            (project_id,),
+        )
+    else:
+        # scope=all — все не-scratch документы (поведение до введения сессий)
+        rows = await state.afetchall(
+            """
+            SELECT id, project_id, filename, path, size, content_type, folder_id,
+                   COALESCE(parse_status, 'skipped') AS parse_status,
+                   COALESCE(parse_error, '') AS parse_error,
+                   COALESCE(parse_method, '') AS parse_method,
+                   created_at,
+                   session_id
+            FROM documents
+            WHERE project_id = ? AND COALESCE(is_scratch, 0) = 0
+            ORDER BY created_at DESC
+            """,
+            (project_id,),
+        )
     return [Document(**dict(r)) for r in rows]
 
 
@@ -292,13 +342,14 @@ async def _background_parse(
         logger.exception("Фоновый парсинг упал для %s", filename)
         status, error, text_path = "failed", f"{type(exc).__name__}: {exc}"[:500], None
 
-    # UPDATE БД — если документ удалили параллельно, просто логируем
+    # UPDATE БД через async-обёртки — не блокируем event loop write-lock'ом SQLite
+    # (sync db.execute держал бы write-lock на 10-30с при AITunnel парсинге PDF)
     try:
-        app_state.db.execute(
+        await app_state.db.aexecute(
             "UPDATE documents SET parse_status = ?, parse_error = ?, parse_method = ? WHERE id = ?",
             (status, error, method, doc_id),
         )
-        app_state.db.commit()
+        await app_state.db.acommit()
     except Exception as exc:  # noqa: BLE001
         logger.warning("background_parse UPDATE failed for %s: %s", doc_id, exc)
 
@@ -331,6 +382,7 @@ async def upload_document(
     file: UploadFile = File(...),
     folder_id: str | None = None,
     is_scratch: bool = False,
+    session_id: str | None = None,
 ):
     """
     Загружает файл на сервер, сохраняет запись в БД.
@@ -338,6 +390,7 @@ async def upload_document(
     folder_id — опциональная папка, куда загрузить документ.
     is_scratch=true — одноразовый файл (картинка из буфера/drag-n-drop),
     не показывается в списке документов, удаляется после выполнения задачи.
+    session_id — если указан, документ session-scoped; если None (UI upload) — project-wide.
 
     Fix 4.1A: парсинг (markitdown/pdfminer/AITunnel) запускается в BackgroundTask.
     Upload возвращает документ с parse_status='pending' мгновенно. Фронт узнаёт
@@ -348,7 +401,7 @@ async def upload_document(
 
     # Проверяем существование папки если указана
     if folder_id:
-        folder_row = state.fetchone(
+        folder_row = await state.afetchone(
             "SELECT id FROM folders WHERE id = ? AND project_id = ?",
             (folder_id, project_id),
         )
@@ -385,14 +438,14 @@ async def upload_document(
     else:
         initial_status, initial_error = "skipped", ""
 
-    state.execute(
+    await state.aexecute(
         """
-        INSERT INTO documents (id, project_id, filename, path, size, content_type, folder_id, is_scratch, parse_status, parse_error, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO documents (id, project_id, filename, path, size, content_type, folder_id, is_scratch, parse_status, parse_error, created_at, session_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (doc_id, project_id, original_name, str(file_path), file_size, content_type, folder_id, 1 if is_scratch else 0, initial_status, initial_error, now),
+        (doc_id, project_id, original_name, str(file_path), file_size, content_type, folder_id, 1 if is_scratch else 0, initial_status, initial_error, now, session_id),
     )
-    state.commit()
+    await state.acommit()
 
     # Парсинг запускаем в фоне — upload НЕ ждёт его
     if initial_status == "pending":
@@ -406,8 +459,8 @@ async def upload_document(
         )
 
     logger.info(
-        "Документ %s загружен в проект %s (%d bytes, parse=%s, folder=%s, scratch=%s)",
-        original_name, project_id, file_size, initial_status, folder_id, is_scratch,
+        "Документ %s загружен в проект %s (%d bytes, parse=%s, folder=%s, scratch=%s, session=%s)",
+        original_name, project_id, file_size, initial_status, folder_id, is_scratch, session_id,
     )
     return Document(
         id=doc_id,
@@ -420,6 +473,7 @@ async def upload_document(
         parse_status=initial_status,
         parse_error=initial_error,
         created_at=datetime.fromisoformat(now),
+        session_id=session_id,
     )
 
 
@@ -439,7 +493,7 @@ async def create_document(project_id: str, body: DocumentCreate, request: Reques
 
     # Проверяем папку если указана
     if body.folder_id:
-        folder_row = state.fetchone(
+        folder_row = await state.afetchone(
             "SELECT id FROM folders WHERE id = ? AND project_id = ?",
             (body.folder_id, project_id),
         )
@@ -460,14 +514,14 @@ async def create_document(project_id: str, body: DocumentCreate, request: Reques
     now = now_iso()
     content_type = "text/markdown" if body.filename.endswith(".md") else "text/plain"
 
-    state.execute(
+    await state.aexecute(
         """
         INSERT INTO documents (id, project_id, filename, path, size, content_type, folder_id, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (doc_id, project_id, body.filename, str(file_path), file_size, content_type, body.folder_id, now),
     )
-    state.commit()
+    await state.acommit()
 
     doc = Document(
         id=doc_id,
@@ -507,7 +561,7 @@ async def list_folders(project_id: str, request: Request):
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    rows = state.fetchall(
+    rows = await state.afetchall(
         """
         SELECT id, project_id, name, parent_id, created_at
         FROM folders
@@ -527,7 +581,7 @@ async def create_folder(project_id: str, body: FolderCreate, request: Request):
 
     # Проверяем родительскую папку если указана
     if body.parent_id:
-        parent = state.fetchone(
+        parent = await state.afetchone(
             "SELECT id FROM folders WHERE id = ? AND project_id = ?",
             (body.parent_id, project_id),
         )
@@ -537,14 +591,14 @@ async def create_folder(project_id: str, body: FolderCreate, request: Request):
     folder_id = str(uuid.uuid4())
     now = now_iso()
 
-    state.execute(
+    await state.aexecute(
         """
         INSERT INTO folders (id, project_id, name, parent_id, created_at)
         VALUES (?, ?, ?, ?, ?)
         """,
         (folder_id, project_id, body.name, body.parent_id, now),
     )
-    state.commit()
+    await state.acommit()
 
     logger.info("Папка '%s' создана в проекте %s (parent=%s)", body.name, project_id, body.parent_id)
     return Folder(
@@ -562,18 +616,18 @@ async def rename_folder(project_id: str, folder_id: str, body: FolderRename, req
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT * FROM folders WHERE id = ? AND project_id = ?",
         (folder_id, project_id),
     )
     if not row:
         raise HTTPException(status_code=404, detail=f"Папка {folder_id} не найдена")
 
-    state.execute(
+    await state.aexecute(
         "UPDATE folders SET name = ? WHERE id = ?",
         (body.name, folder_id),
     )
-    state.commit()
+    await state.acommit()
 
     logger.info("Папка %s переименована в '%s'", folder_id, body.name)
     return Folder(
@@ -591,7 +645,7 @@ async def delete_folder(project_id: str, folder_id: str, request: Request):
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT * FROM folders WHERE id = ? AND project_id = ?",
         (folder_id, project_id),
     )
@@ -601,18 +655,18 @@ async def delete_folder(project_id: str, folder_id: str, request: Request):
     parent_id = row["parent_id"]  # куда переместить содержимое (None = корень)
 
     # Перемещаем документы из этой папки в родительскую
-    state.execute(
+    await state.aexecute(
         "UPDATE documents SET folder_id = ? WHERE folder_id = ?",
         (parent_id, folder_id),
     )
     # Перемещаем подпапки в родительскую
-    state.execute(
+    await state.aexecute(
         "UPDATE folders SET parent_id = ? WHERE parent_id = ?",
         (parent_id, folder_id),
     )
     # Удаляем саму папку
-    state.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
-    state.commit()
+    await state.aexecute("DELETE FROM folders WHERE id = ?", (folder_id,))
+    await state.acommit()
 
     logger.info("Папка %s удалена, содержимое перемещено в parent=%s", folder_id, parent_id)
 
@@ -628,7 +682,7 @@ async def move_document(project_id: str, doc_id: str, body: DocumentMove, reques
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT * FROM documents WHERE id = ? AND project_id = ?",
         (doc_id, project_id),
     )
@@ -637,18 +691,18 @@ async def move_document(project_id: str, doc_id: str, body: DocumentMove, reques
 
     # Проверяем целевую папку если указана
     if body.folder_id:
-        folder_row = state.fetchone(
+        folder_row = await state.afetchone(
             "SELECT id FROM folders WHERE id = ? AND project_id = ?",
             (body.folder_id, project_id),
         )
         if not folder_row:
             raise HTTPException(status_code=404, detail=f"Папка {body.folder_id} не найдена")
 
-    state.execute(
+    await state.aexecute(
         "UPDATE documents SET folder_id = ? WHERE id = ?",
         (body.folder_id, doc_id),
     )
-    state.commit()
+    await state.acommit()
 
     logger.info("Документ %s перемещён в папку %s", doc_id, body.folder_id)
     return Document(
@@ -669,7 +723,7 @@ async def rename_document(project_id: str, doc_id: str, body: DocumentRename, re
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT * FROM documents WHERE id = ? AND project_id = ?",
         (doc_id, project_id),
     )
@@ -704,11 +758,11 @@ async def rename_document(project_id: str, doc_id: str, body: DocumentRename, re
     else:
         new_path = old_path  # файл не найден на диске, обновляем только БД
 
-    state.execute(
+    await state.aexecute(
         "UPDATE documents SET filename = ?, path = ? WHERE id = ?",
         (new_filename, str(new_path), doc_id),
     )
-    state.commit()
+    await state.acommit()
 
     logger.info("Документ %s переименован: '%s' → '%s'", doc_id, old_filename, new_filename)
     return Document(
@@ -724,6 +778,84 @@ async def rename_document(project_id: str, doc_id: str, body: DocumentRename, re
 
 
 # ---------------------------------------------------------------------------
+# GET /api/documents/{project_id}/{doc_id}/content — текстовое содержимое документа
+# ВАЖНО: должен быть ДО /{project_id}/{doc_id} чтобы FastAPI не перехватил "content" как doc_id
+# ---------------------------------------------------------------------------
+
+@router.get("/{project_id}/{doc_id}/content")
+async def get_document_content(project_id: str, doc_id: str, request: Request):
+    """Возвращает текстовое содержимое документа (plain text / markdown).
+
+    Логика:
+    - parse_status='parsed' и есть .md кеш → читаем кеш
+    - parse_status='pending' / 'skipped' и текстовый файл → читаем напрямую
+    - parse_status='failed' → 422 с описанием ошибки парсинга
+    - бинарный файл без кеша (image, pdf без parse) → 415
+
+    Фронт использует res.text() — возвращаем PlainTextResponse.
+    """
+    from fastapi.responses import PlainTextResponse
+
+    state = request.app.state.db
+    ensure_project(state, project_id)
+
+    row = await state.afetchone(
+        """
+        SELECT id, project_id, filename, path, content_type,
+               COALESCE(parse_status, 'skipped') AS parse_status,
+               COALESCE(parse_error, '') AS parse_error
+        FROM documents
+        WHERE id = ? AND project_id = ?
+        """,
+        (doc_id, project_id),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Документ {doc_id} не найден")
+
+    parse_status = row["parse_status"]
+    parse_error = row["parse_error"]
+    file_path_str = row["path"]
+    filename = row["filename"]
+
+    # parse_status='failed' — сообщаем пользователю причину
+    if parse_status == "failed":
+        logger.warning(
+            "Запрошено содержимое документа %s с parse_status=failed: %s",
+            doc_id, parse_error,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"Документ не распарсен: {parse_error or 'неизвестная ошибка парсинга'}",
+        )
+
+    # Пробуем получить текст через хелпер (кеш .md или чтение текстового файла)
+    text = _get_text_content(file_path_str, filename)
+    if text is not None:
+        return PlainTextResponse(content=text)
+
+    # Файл существует, но содержимое не извлекаемо (бинарный без кеша)
+    ext = Path(filename).suffix.lower()
+    content_type = row["content_type"] or ""
+    is_binary = (
+        ext not in TEXT_EXTS
+        and not (parse_status == "parsed")  # parsed гарантирует кеш (уже выше проверили)
+    )
+    if is_binary or (content_type and not content_type.startswith("text/")):
+        raise HTTPException(
+            status_code=415,
+            detail=f"Файл '{filename}' является бинарным и не имеет текстового представления. "
+                   f"Дождитесь завершения парсинга (parse_status={parse_status}).",
+        )
+
+    # Файл исчез с диска или пуст
+    logger.warning("Не удалось прочитать содержимое документа %s (%s)", doc_id, filename)
+    raise HTTPException(
+        status_code=404,
+        detail=f"Содержимое файла '{filename}' недоступно (файл отсутствует на диске или пуст)",
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /api/documents/{project_id}/{doc_id} — ПОСЛЕ folders чтобы /folders не перехватывался
 # ---------------------------------------------------------------------------
 
@@ -733,7 +865,7 @@ async def get_document(project_id: str, doc_id: str, request: Request):
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT * FROM documents WHERE id = ? AND project_id = ?",
         (doc_id, project_id),
     )
@@ -762,7 +894,7 @@ async def delete_document(project_id: str, doc_id: str, request: Request):
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT * FROM documents WHERE id = ? AND project_id = ?",
         (doc_id, project_id),
     )
@@ -774,6 +906,6 @@ async def delete_document(project_id: str, doc_id: str, request: Request):
         file_path.unlink()
         logger.info("Файл документа удалён: %s", file_path)
 
-    state.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-    state.commit()
+    await state.aexecute("DELETE FROM documents WHERE id = ?", (doc_id,))
+    await state.acommit()
     logger.info("Документ %s удалён из проекта %s", doc_id, project_id)

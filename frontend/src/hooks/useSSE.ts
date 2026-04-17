@@ -42,7 +42,7 @@ export function useSSE() {
   const addMessage = useStore((s) => s.addMessage)
   const setMessageStreaming = useStore((s) => s.setMessageStreaming)
   const setTaskPhase = useStore((s) => s.setTaskPhase)
-  const loadHistory = useStore((s) => s.loadHistory)
+  const loadMessages = useStore((s) => s.loadMessages)
   const loadDocuments = useStore((s) => s.loadDocuments)
   const selectedProjectId = useStore((s) => s.selectedProjectId)
 
@@ -61,11 +61,11 @@ export function useSSE() {
       const wasReconnect = retryCountRef.current > 0
       retryCountRef.current = 0
 
-      // После переподключения — подтягиваем пропущенные обновления
+      // После переподключения — подтягиваем пропущенные сообщения текущей сессии
       if (wasReconnect) {
-        const pid = useStore.getState().selectedProjectId
-        if (pid) {
-          loadHistory(pid)
+        const sid = useStore.getState().currentSessionId
+        if (sid) {
+          loadMessages(sid)
         }
       }
     }
@@ -83,24 +83,31 @@ export function useSSE() {
           if (status === 'completed') playNotificationSound()
           useStore.setState({ currentTaskId: null })
           setTaskPhase(null)
-          const messages = useStore.getState().messages
-          const pendingMsg = messages.find(
-            (m) => m.task_id === data.task_id && m.role === 'assistant',
-          )
-          if (pendingMsg) {
-            const task = useStore.getState().tasks[data.task_id]
-            const finalContent =
-              task?.streamBuffer ||
-              data.result ||
-              (status === 'failed' ? `❌ Ошибка: ${data.error}` : '')
-            useStore.getState().updateMessageContent(pendingMsg.id, finalContent)
-            setMessageStreaming(pendingMsg.id, false)
-          }
 
-          // Перезагружаем историю для получения реального сообщения с сервера
-          const pid = useStore.getState().selectedProjectId
-          if (pid) {
-            setTimeout(() => loadHistory(pid), 500)
+          // B2: если задача принадлежит другой сессии — не трогаем messages текущей.
+          // Пользователь вернётся в ту сессию — loadMessages(A) покажет полный ответ из БД.
+          const task = useStore.getState().tasks[data.task_id]
+          const currentSid = useStore.getState().currentSessionId
+          const isCurrentSession = !task?.session_id || task.session_id === currentSid
+
+          if (isCurrentSession) {
+            const messages = useStore.getState().messages
+            const pendingMsg = messages.find(
+              (m) => m.task_id === data.task_id && m.role === 'assistant',
+            )
+            if (pendingMsg) {
+              const finalContent =
+                task?.streamBuffer ||
+                data.result ||
+                (status === 'failed' ? `❌ Ошибка: ${data.error}` : '')
+              useStore.getState().updateMessageContent(pendingMsg.id, finalContent)
+              setMessageStreaming(pendingMsg.id, false)
+            }
+
+            // Перезагружаем историю текущей сессии для получения реального сообщения с сервера
+            if (currentSid) {
+              setTimeout(() => loadMessages(currentSid), 500)
+            }
           }
         }
       } catch (err) {
@@ -138,6 +145,20 @@ export function useSSE() {
     es.addEventListener('task_chunk', (e: MessageEvent) => {
       try {
         const data: SSEResultChunk = JSON.parse(e.data)
+
+        // B2: фильтруем чанки чужих сессий — task state обновляем (для StatusBar),
+        // но messages не трогаем (они принадлежат другой сессии)
+        const task = useStore.getState().tasks[data.task_id]
+        const currentSid = useStore.getState().currentSessionId
+        if (task?.session_id && task.session_id !== currentSid) {
+          // Только обновляем streamBuffer задачи — без записи в messages
+          updateTask(data.task_id, {
+            streamBuffer: (task.streamBuffer || '') + data.chunk,
+            status: 'running',
+          })
+          return
+        }
+
         appendTaskStream(data.task_id, data.chunk)
       } catch (err) {
         console.warn('SSE task_chunk parse error:', err)
@@ -216,7 +237,7 @@ export function useSSE() {
         if (mountedRef.current) connect()
       }, delay)
     }
-  }, [updateTask, appendTaskStream, setWorkerStatus, addMessage, setMessageStreaming, setTaskPhase, loadHistory, loadDocuments])
+  }, [updateTask, appendTaskStream, setWorkerStatus, addMessage, setMessageStreaming, setTaskPhase, loadMessages, loadDocuments])
 
   useEffect(() => {
     mountedRef.current = true
@@ -232,14 +253,12 @@ export function useSSE() {
     }
   }, [connect])
 
-  // При смене проекта — переподключаемся чтобы получать события только для него
-  // (бэкенд фильтрует по текущему проекту через query param если нужно)
+  // При смене проекта — перезагружаем документы.
+  // Историю сообщений грузить не нужно: selectProject в store уже вызывает loadMessages
+  // для активной сессии, дублирование здесь приводило к loadMessages(projectId) вместо sessionId
   useEffect(() => {
-    // Бэкенд сам рассылает всем — фильтрация на фронте уже есть в store
-    // Просто перезагружаем историю при смене проекта
     if (selectedProjectId) {
-      loadHistory(selectedProjectId)
       useStore.getState().loadDocuments(selectedProjectId)
     }
-  }, [selectedProjectId, loadHistory])
+  }, [selectedProjectId])
 }

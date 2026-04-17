@@ -38,14 +38,14 @@ async def b24_webhook(request: Request):
     webhook_id = str(uuid.uuid4())
     now = _now_iso()
 
-    state.execute(
+    await state.aexecute(
         """
         INSERT INTO webhooks_raw (id, source, payload, received_at, processed)
         VALUES (?, 'b24', ?, ?, 0)
         """,
         (webhook_id, payload_str, now),
     )
-    state.commit()
+    await state.acommit()
 
     logger.info("Б24 вебхук %s принят (%d chars)", webhook_id, len(payload_str))
     return {"ok": True, "id": webhook_id}

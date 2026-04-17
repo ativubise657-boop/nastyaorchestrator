@@ -1,10 +1,13 @@
 """
 Конфигурация приложения — читается из переменных окружения / .env файла.
 """
+import logging
 import os
 import re
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Корень проекта (директория, где лежит backend/)
 # При frozen-режиме (PyInstaller onefile) исходники распакованы во временный
@@ -108,12 +111,14 @@ def get_local_app_version(base_dir: Path | None = None) -> str:
 
     try:
         config_text = (root / "backend" / "core" / "config.py").read_text(encoding="utf-8", errors="ignore")
-    except Exception:
+    except Exception as exc:
+        logger.debug("config: не удалось прочитать config.py для определения версии: %s", exc)
         config_text = None
 
     try:
         changelog_text = (root / "CHANGELOG.md").read_text(encoding="utf-8", errors="ignore")
-    except Exception:
+    except Exception as exc:
+        logger.debug("config: не удалось прочитать CHANGELOG.md для определения версии: %s", exc)
         changelog_text = None
 
     return resolve_app_version(

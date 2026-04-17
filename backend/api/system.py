@@ -603,14 +603,14 @@ async def queue_heartbeat(body: HeartbeatRequest, request: Request):
     state = request.app.state.db
     now = _now_iso()
 
-    state.execute(
+    await state.aexecute(
         "INSERT INTO worker_heartbeats (task_id, timestamp) VALUES (?, ?)",
         (body.task_id, now),
     )
-    state.commit()
+    await state.acommit()
 
     # Чистим старые heartbeat-записи (оставляем последние 100)
-    state.execute(
+    await state.aexecute(
         """
         DELETE FROM worker_heartbeats
         WHERE id NOT IN (
@@ -618,7 +618,7 @@ async def queue_heartbeat(body: HeartbeatRequest, request: Request):
         )
         """
     )
-    state.commit()
+    await state.acommit()
 
     # Публикуем статус worker-а в SSE
     worker_status = _get_worker_status(state, request.app.state.queue)

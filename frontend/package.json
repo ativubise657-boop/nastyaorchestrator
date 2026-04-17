@@ -1,7 +1,7 @@
 {
   "name": "nastya-orchestrator-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "32.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,6 +24,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.4.1",
+    "sass-embedded": "^1.99.0",
     "typescript": "~5.8.3",
     "vite": "^6.3.5"
   }

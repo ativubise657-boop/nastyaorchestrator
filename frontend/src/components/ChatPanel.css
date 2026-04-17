@@ -1,10 +1,20 @@
 /* ===== ChatPanel ===== */
 .chat-panel {
   display: flex;
-  flex-direction: column;
+  flex-direction: row; /* SessionsSidebar слева, chat-panel__main справа */
   height: 100%;
   overflow: hidden;
   background: var(--bg-base);
+}
+
+/* Основная область чата — всё кроме SessionsSidebar */
+.chat-panel__main {
+  flex: 1;
+  min-width: 0; /* flex-фикс: иначе контент может вылезти за границы */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* ===== Header ===== */
@@ -69,6 +79,21 @@
 .chat-panel__no-project {
   font-size: 13px;
   color: var(--text-muted);
+}
+
+/* Заголовок текущей сессии в хедере */
+.chat-panel__session-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  margin-left: auto; /* прижимаем вправо */
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
 }
 
 /* ===== Messages area ===== */

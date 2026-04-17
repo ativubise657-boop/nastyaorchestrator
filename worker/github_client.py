@@ -117,7 +117,8 @@ async def get_file_content(git_url: str, file_path: str) -> str | None:
         if encoding == "base64" and content:
             try:
                 return base64.b64decode(content).decode("utf-8", errors="replace")
-            except Exception:
+            except Exception as exc:
+                logger.debug("github_client: base64 decode ошибка для файла: %s", exc)
                 return None
 
         return None
@@ -148,7 +149,8 @@ async def get_readme(git_url: str) -> str | None:
         if content:
             try:
                 return base64.b64decode(content).decode("utf-8", errors="replace")
-            except Exception:
+            except Exception as exc:
+                logger.debug("github_client: base64 decode ошибка для README: %s", exc)
                 return None
 
         return None

@@ -18,10 +18,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build Windows Release
     runs-on: windows-latest
+    timeout-minutes: 60
 
     env:
       PYTHON_VERSION: '3.12'

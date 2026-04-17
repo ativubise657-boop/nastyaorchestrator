@@ -125,8 +125,8 @@ async def _cmd_pre(
             lines.append(diff_stat.stdout.strip())
             lines.append("```")
             lines.append("")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("precompact: git diff --stat упал, git diff секция будет пропущена: %s", exc, exc_info=True)
 
     # Незакоммиченные файлы
     try:
@@ -141,8 +141,8 @@ async def _cmd_pre(
             lines.append(status.stdout.strip())
             lines.append("```")
             lines.append("")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("precompact: git status упал, статус будет пропущен: %s", exc, exc_info=True)
 
     content = "\n".join(lines)
 
@@ -200,8 +200,8 @@ async def _cmd_post() -> dict:
     try:
         latest.unlink()
         logger.info("post: прочитан и удалён %s", latest)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("post: не удалось удалить %s (возможно уже удалён): %s", latest.name, exc)
 
     # Удаляем старые precompact (>24ч)
     for f in files[1:]:
@@ -210,8 +210,8 @@ async def _cmd_post() -> dict:
             if age_hours > 24:
                 f.unlink()
                 logger.info("post: удалён старый %s (%.1fч)", f.name, age_hours)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("post: не удалось удалить старый precompact %s: %s", f.name, exc)
 
     now_str = datetime.now().strftime("%H:%M")
     return {

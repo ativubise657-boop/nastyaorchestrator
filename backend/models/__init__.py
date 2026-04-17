@@ -11,6 +11,28 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
+# Чат-сессия
+# ---------------------------------------------------------------------------
+
+class ChatSession(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0  # вычисляемое через подзапрос COUNT, не хранится в таблице
+
+
+class ChatSessionCreate(BaseModel):
+    project_id: str
+    title: str = "Новый чат"
+
+
+class ChatSessionUpdate(BaseModel):
+    title: str
+
+
+# ---------------------------------------------------------------------------
 # Проект
 # ---------------------------------------------------------------------------
 
@@ -60,6 +82,7 @@ class Task(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    session_id: Optional[str] = None  # к какой сессии относится задача
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +105,7 @@ class ChatMessage(BaseModel):
     task_id: Optional[str] = None
     attachments: list[ChatAttachment] = []
     created_at: datetime
+    session_id: Optional[str] = None  # к какой сессии относится сообщение
 
 
 class ChatSendRequest(BaseModel):
@@ -90,6 +114,7 @@ class ChatSendRequest(BaseModel):
     mode: str = "auto"  # auto / ag+ / rev / solo
     model: str = "gpt-5.4"  # glm-4.7-flash / glm-5-turbo / gpt-5.4-nano / gpt-5.4 / gpt-5.3-codex / gemini-2.5-flash
     attachments: list[ChatAttachment] = []
+    session_id: str  # обязателен — фронт всегда знает активную сессию
 
 
 class ChatSendResponse(BaseModel):
@@ -113,6 +138,7 @@ class Document(BaseModel):
     parse_error: str = ''
     parse_method: str = ''  # markitdown | pdfminer | aitunnel_gemini | cache
     created_at: datetime
+    session_id: Optional[str] = None  # session-scoped (clipboard) или NULL = project-wide (PDF/TZ из UI)
 
 
 # ---------------------------------------------------------------------------

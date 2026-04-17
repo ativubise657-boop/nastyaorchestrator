@@ -1,10 +1,12 @@
 """
 SQLite WAL persistence — thread-local соединения, инициализация схемы.
 """
+import asyncio
 import logging
 import os
 import sqlite3
 import threading
+import uuid
 from pathlib import Path
 
 from backend.core.config import DB_PATH
@@ -44,6 +46,7 @@ class State:
         created_at              TEXT NOT NULL,
         started_at              TEXT,
         completed_at            TEXT,
+        session_id              TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id)
     );
 
@@ -54,7 +57,8 @@ class State:
         content     TEXT NOT NULL,
         task_id     TEXT,
         attachments TEXT DEFAULT '',
-        created_at  TEXT NOT NULL
+        created_at  TEXT NOT NULL,
+        session_id  TEXT
     );
 
     CREATE TABLE IF NOT EXISTS folders (
@@ -80,6 +84,7 @@ class State:
         parse_error  TEXT DEFAULT '',
         parse_method TEXT DEFAULT '',
         created_at   TEXT NOT NULL,
+        session_id   TEXT,
         FOREIGN KEY (folder_id) REFERENCES folders(id)
     );
 
@@ -97,6 +102,16 @@ class State:
         timestamp TEXT NOT NULL
     );
 
+    -- Чат-сессии: каждый «чат» — изолированная история с привязкой к проекту
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+        id         TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
+
     -- Индексы для частых запросов
     CREATE INDEX IF NOT EXISTS idx_tasks_status        ON tasks(status);
     CREATE INDEX IF NOT EXISTS idx_tasks_project       ON tasks(project_id);
@@ -106,6 +121,9 @@ class State:
     CREATE INDEX IF NOT EXISTS idx_documents_folder    ON documents(folder_id);
     CREATE INDEX IF NOT EXISTS idx_folders_project     ON folders(project_id);
     CREATE INDEX IF NOT EXISTS idx_heartbeats_ts       ON worker_heartbeats(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_sessions_project    ON chat_sessions(project_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_messages_session    ON chat_messages(session_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_documents_session   ON documents(session_id);
 
     CREATE TABLE IF NOT EXISTS links (
         id          TEXT PRIMARY KEY,
@@ -235,6 +253,99 @@ class State:
                 conn.commit()
             except sqlite3.OperationalError:
                 pass
+        # 8. session_id в chat_messages — привязка сообщения к чат-сессии (nullable)
+        try:
+            conn.execute("SELECT session_id FROM chat_messages LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                conn.execute("ALTER TABLE chat_messages ADD COLUMN session_id TEXT")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        # 9. session_id в documents — scoped-документы (nullable; NULL = project-wide).
+        # Картинки из буфера (is_scratch=1) привязываются к сессии,
+        # загруженные PDF/TZ остаются NULL (доступны во всех сессиях проекта).
+        try:
+            conn.execute("SELECT session_id FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                conn.execute("ALTER TABLE documents ADD COLUMN session_id TEXT")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        # 10. session_id в tasks — задача может принадлежать конкретной сессии (nullable)
+        try:
+            conn.execute("SELECT session_id FROM tasks LIMIT 1")
+        except sqlite3.OperationalError:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN session_id TEXT")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        # 11. Легаси-миграция: создаём чат-сессию «Chat 1» для каждого проекта,
+        # у которого есть несессионные сообщения (session_id IS NULL).
+        # Картинки из буфера (is_scratch=1) привязываем к той же сессии,
+        # загруженные документы оставляем project-wide (session_id=NULL).
+        # Идемпотентно: повторный запуск не создаёт дубликаты.
+        try:
+            # Явно создаём chat_sessions до миграции — на случай первого запуска
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                    id         TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    title      TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (project_id) REFERENCES projects(id)
+                )
+            """)
+            conn.commit()
+
+            rows = conn.execute("""
+                SELECT DISTINCT project_id FROM chat_messages WHERE session_id IS NULL
+            """).fetchall()
+
+            for row in rows:
+                project_id = row[0]
+                # Проверяем — нет ли уже созданной сессии для этого проекта
+                existing = conn.execute(
+                    "SELECT id FROM chat_sessions WHERE project_id = ? LIMIT 1",
+                    (project_id,)
+                ).fetchone()
+                if existing:
+                    session_id = existing[0]
+                else:
+                    # Рассчитываем временные метки из истории сообщений
+                    ts_row = conn.execute("""
+                        SELECT MIN(created_at), MAX(created_at)
+                        FROM chat_messages
+                        WHERE project_id = ? AND session_id IS NULL
+                    """, (project_id,)).fetchone()
+                    created_at = ts_row[0] if ts_row and ts_row[0] else ""
+                    updated_at = ts_row[1] if ts_row and ts_row[1] else created_at
+                    session_id = str(uuid.uuid4())
+                    conn.execute(
+                        "INSERT INTO chat_sessions (id, project_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (session_id, project_id, "Chat 1", created_at, updated_at)
+                    )
+
+                # Привязываем несессионные сообщения к новой/существующей сессии
+                conn.execute(
+                    "UPDATE chat_messages SET session_id = ? WHERE project_id = ? AND session_id IS NULL",
+                    (session_id, project_id)
+                )
+                # Картинки из буфера (is_scratch=1) — сессионные, привязываем к сессии
+                conn.execute(
+                    "UPDATE documents SET session_id = ? WHERE project_id = ? AND is_scratch = 1 AND session_id IS NULL",
+                    (session_id, project_id)
+                )
+                # PDF/TZ через UI (is_scratch=0) — project-wide, session_id остаётся NULL
+
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Таблицы ещё не существуют при самом первом запуске —
+            # executescript создаст их ниже, миграция пройдёт при следующем старте
+            pass
 
         conn.executescript(self._SCHEMA)
         conn.commit()
@@ -260,3 +371,31 @@ class State:
 
     def fetchall(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         return self.conn.execute(sql, params).fetchall()
+
+    # ------------------------------------------------------------------
+    # Async wrappers — не блокируют event loop FastAPI/uvicorn.
+    # Каждый вызов запускает sync-метод в отдельном потоке через thread pool.
+    # Sync-методы выше СОХРАНЕНЫ — worker/ использует их в sync контексте.
+    # thread-local соединения (self._local) гарантируют, что каждый поток
+    # получает своё SQLite-соединение — race conditions исключены.
+    # ------------------------------------------------------------------
+
+    async def aexecute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        """Async-обёртка над execute — выполняется в thread pool, не блокирует event loop."""
+        return await asyncio.to_thread(self.execute, sql, params)
+
+    async def afetchone(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
+        """Async-обёртка над fetchone."""
+        return await asyncio.to_thread(self.fetchone, sql, params)
+
+    async def afetchall(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+        """Async-обёртка над fetchall."""
+        return await asyncio.to_thread(self.fetchall, sql, params)
+
+    async def acommit(self) -> None:
+        """Async-обёртка над commit."""
+        await asyncio.to_thread(self.commit)
+
+    async def aexecutemany(self, sql: str, params_seq) -> sqlite3.Cursor:
+        """Async-обёртка над executemany."""
+        return await asyncio.to_thread(self.executemany, sql, params_seq)

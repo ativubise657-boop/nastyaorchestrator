@@ -283,8 +283,10 @@ from backend.api.links import router as links_router
 from backend.api.webhooks import router as webhooks_router
 from backend.api.system import router_system, router_queue
 from backend.api.settings import router as settings_router
+from backend.api.sessions import router as sessions_router
 
 app.include_router(chat_router,      prefix="/api/chat",       tags=["chat"])
+app.include_router(sessions_router,  prefix="/api/chat",       tags=["sessions"])
 app.include_router(projects_router,  prefix="/api/projects",   tags=["projects"])
 app.include_router(results_router,   prefix="/api/results",    tags=["results"])
 app.include_router(documents_router, prefix="/api/documents",  tags=["documents"])

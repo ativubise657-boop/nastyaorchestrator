@@ -63,11 +63,13 @@ class TaskQueue:
         model: str = "gpt-5.4",
         task_id: str | None = None,
         attachment_document_ids: list[str] | None = None,
+        session_id: str | None = None,
     ) -> str:
         """
         Создаёт запись задачи со статусом queued.
         attachment_document_ids — файлы явно приложенные к сообщению; они
         автоматически станут requested=true при выдаче задачи worker-у.
+        session_id — привязка задачи к чат-сессии (nullable; None = legacy/project-wide).
         Возвращает id новой задачи.
         """
         tid = task_id or str(uuid.uuid4())
@@ -75,13 +77,13 @@ class TaskQueue:
         atts_json = json.dumps(attachment_document_ids) if attachment_document_ids else ""
         self._state.execute(
             """
-            INSERT INTO tasks (id, project_id, prompt, mode, model, status, attachment_document_ids, created_at)
-            VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
+            INSERT INTO tasks (id, project_id, session_id, prompt, mode, model, status, attachment_document_ids, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)
             """,
-            (tid, project_id, prompt, mode, model, atts_json, now),
+            (tid, project_id, session_id, prompt, mode, model, atts_json, now),
         )
         self._state.commit()
-        logger.info("Задача %s добавлена в очередь (проект %s, режим %s)", tid, project_id, mode)
+        logger.info("Задача %s добавлена в очередь (проект %s, сессия %s, режим %s)", tid, project_id, session_id, mode)
         return tid
 
     # ------------------------------------------------------------------
@@ -100,15 +102,16 @@ class TaskQueue:
         conn = self._state.conn
         try:
             conn.execute("COMMIT")
-        except Exception:
-            pass
+        except Exception as exc:
+            # Нет активной транзакции — ожидаемо при первом вызове или после ROLLBACK
+            logger.debug("queue: COMMIT перед BEGIN IMMEDIATE не нужен (нет активной транзакции): %s", exc)
         conn.execute("BEGIN IMMEDIATE")
         try:
             # Перебираем по возрасту; для каждой проверяем, завершён ли парсинг
             # attached_document_ids. Если есть pending — пропускаем до след раза.
             cursor = conn.execute(
                 """
-                SELECT id, project_id, prompt, mode, model, created_at,
+                SELECT id, project_id, session_id, prompt, mode, model, created_at,
                        COALESCE(attachment_document_ids, '') AS attached_ids
                 FROM tasks
                 WHERE status = 'queued'

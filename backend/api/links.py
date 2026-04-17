@@ -24,7 +24,7 @@ async def list_links(project_id: str, request: Request):
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    rows = state.fetchall(
+    rows = await state.afetchall(
         """
         SELECT id, project_id, title, url, description, folder_id, created_at
         FROM links
@@ -57,14 +57,14 @@ async def create_link(project_id: str, body: LinkCreate, request: Request):
     link_id = str(uuid.uuid4())
     now = now_iso()
 
-    state.execute(
+    await state.aexecute(
         """
         INSERT INTO links (id, project_id, title, url, description, folder_id, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (link_id, project_id, body.title.strip() or url, url, body.description.strip(), body.folder_id, now),
     )
-    state.commit()
+    await state.acommit()
 
     logger.info("Ссылка '%s' добавлена в проект %s", body.title or url, project_id)
     return Link(
@@ -88,15 +88,15 @@ async def delete_link(project_id: str, link_id: str, request: Request):
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT id FROM links WHERE id = ? AND project_id = ?",
         (link_id, project_id),
     )
     if not row:
         raise HTTPException(status_code=404, detail=f"Ссылка {link_id} не найдена")
 
-    state.execute("DELETE FROM links WHERE id = ?", (link_id,))
-    state.commit()
+    await state.aexecute("DELETE FROM links WHERE id = ?", (link_id,))
+    await state.acommit()
     logger.info("Ссылка %s удалена из проекта %s", link_id, project_id)
 
 
@@ -110,7 +110,7 @@ async def update_link(project_id: str, link_id: str, body: LinkUpdate, request: 
     state = request.app.state.db
     ensure_project(state, project_id)
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT * FROM links WHERE id = ? AND project_id = ?",
         (link_id, project_id),
     )
@@ -145,10 +145,10 @@ async def update_link(project_id: str, link_id: str, body: LinkUpdate, request: 
     # Формируем SQL UPDATE
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     values = list(updates.values()) + [link_id]
-    state.execute(f"UPDATE links SET {set_clause} WHERE id = ?", values)
-    state.commit()
+    await state.aexecute(f"UPDATE links SET {set_clause} WHERE id = ?", tuple(values))
+    await state.acommit()
 
     # Возвращаем обновлённую ссылку
-    updated = state.fetchone("SELECT * FROM links WHERE id = ?", (link_id,))
+    updated = await state.afetchone("SELECT * FROM links WHERE id = ?", (link_id,))
     logger.info("Ссылка %s обновлена в проекте %s", link_id, project_id)
     return Link(**dict(updated))

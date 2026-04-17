@@ -75,7 +75,7 @@ async def submit_result(body: ResultRequest, request: Request):
     state = request.app.state.db
     queue = request.app.state.queue
 
-    row = state.fetchone("SELECT * FROM tasks WHERE id = ?", (body.task_id,))
+    row = await state.afetchone("SELECT * FROM tasks WHERE id = ?", (body.task_id,))
     if not row:
         raise HTTPException(status_code=404, detail=f"Задача {body.task_id} не найдена")
 
@@ -102,14 +102,23 @@ async def submit_result(body: ResultRequest, request: Request):
         content = body.result if body.result else f"Ошибка выполнения: {body.error}"
         role = "assistant" if body.status == TaskStatus.completed else "system"
         msg_id = str(uuid.uuid4())
-        state.execute(
+        # Берём session_id из задачи — без него сообщение не будет видно в UI
+        # (фронт загружает историю через WHERE session_id=?, а LLM не увидит свои прошлые ответы)
+        task_session_id = row["session_id"] if "session_id" in row.keys() else None
+        await state.aexecute(
             """
-            INSERT INTO chat_messages (id, project_id, role, content, task_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO chat_messages (id, project_id, session_id, role, content, task_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (msg_id, row["project_id"], role, content, body.task_id, _now_iso()),
+            (msg_id, row["project_id"], task_session_id, role, content, body.task_id, _now_iso()),
         )
-        state.commit()
+        # Обновляем updated_at сессии — чтобы сессия поднялась в списке после ответа ассистента
+        if task_session_id:
+            await state.aexecute(
+                "UPDATE chat_sessions SET updated_at=? WHERE id=?",
+                (_now_iso(), task_session_id),
+            )
+        await state.acommit()
 
     # Публикуем SSE-событие
     await request.app.state.publish_event(
@@ -140,7 +149,7 @@ async def submit_stream_chunk(body: StreamChunkRequest, request: Request):
     """
     state = request.app.state.db
 
-    row = state.fetchone(
+    row = await state.afetchone(
         "SELECT project_id, status FROM tasks WHERE id = ?", (body.task_id,)
     )
     if not row:

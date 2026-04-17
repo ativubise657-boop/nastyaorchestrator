@@ -122,8 +122,11 @@ def _setup_logging() -> None:
     try:
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(_asyncio_handler)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Python 3.10+ может не иметь running loop на этом этапе — не критично
+        logging.getLogger("worker.setup").debug(
+            "worker setup: не удалось установить asyncio exception handler: %s", exc
+        )
 
 
 async def main() -> None:
@@ -136,10 +139,22 @@ async def main() -> None:
     try:
         from backend.core.state import State
         from backend.core import proxy as proxy_module
-        applied = proxy_module.apply_from_db(State())
+        _shared_state = State()
+        applied = proxy_module.apply_from_db(_shared_state)
         logger.info("Proxy applied: %s", applied.to_safe_dict())
     except Exception as exc:
         logger.warning("Не удалось применить прокси на старте worker: %s", exc)
+        _shared_state = None
+
+    # Инициализируем circuit breaker с persistent store (счётчик выживает рестарт)
+    try:
+        from worker.circuit_breaker import init_default
+        if _shared_state is not None:
+            init_default(_shared_state)
+        else:
+            logger.warning("CircuitBreaker работает в in-memory режиме (State недоступен)")
+    except Exception as exc:
+        logger.warning("Не удалось инициализировать CircuitBreaker: %s", exc)
 
     config = WorkerConfig()
 

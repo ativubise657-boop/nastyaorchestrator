@@ -38,9 +38,23 @@ export default function App() {
   // Работает только внутри собранного Tauri-окна (в vite dev молча пропускает).
   const updater = useTauriUpdater()
 
-  // Загружаем проекты + remote config при старте
+  // Загружаем проекты + remote config при старте.
+  // B3 cold start: после загрузки проектов восстанавливаем выбранный (сессии + история).
+  // selectedProjectId уже в store из localStorage, но side-effects (loadSessions/loadMessages)
+  // не запускаются автоматически — вызываем selectProject явно.
   useEffect(() => {
-    useStore.getState().loadProjects()
+    const init = async () => {
+      await useStore.getState().loadProjects()
+      const { projects, selectedProjectId, selectProject } = useStore.getState()
+      if (selectedProjectId && projects.some((p) => p.id === selectedProjectId)) {
+        // Проект из прошлой сессии существует — восстанавливаем сессии и историю
+        await selectProject(selectedProjectId)
+      } else if (projects.length > 0) {
+        // Нет сохранённого или он удалён — берём первый доступный
+        await selectProject(projects[0].id)
+      }
+    }
+    init()
     useStore.getState().loadRemoteConfig()
   }, [])
 

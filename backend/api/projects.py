@@ -211,7 +211,8 @@ def _parse_changelog_sections(changelog_text: str | None) -> list[dict]:
 def _read_local_text(project_path: Path, relative_path: str) -> str | None:
     try:
         return (project_path / relative_path).read_text(encoding="utf-8", errors="ignore")
-    except Exception:
+    except Exception as exc:
+        logger.debug("projects: не удалось прочитать локальный файл %s: %s", relative_path, exc)
         return None
 
 
@@ -225,7 +226,8 @@ async def _read_git_text(project_path: Path, git_ref: str, relative_path: str) -
             timeout=60,
         )
         return text
-    except Exception:
+    except Exception as exc:
+        logger.debug("projects: git show %s:%s упал: %s", git_ref, relative_path, exc)
         return None
 
 
@@ -374,19 +376,20 @@ async def _build_app_update_fallback_preview(project_path: Path, check_error: st
     try:
         branch_out, _ = await _run_command("git", "branch", "--show-current", cwd=project_path, timeout=60)
         branch = branch_out or branch
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("projects: git branch --show-current упал для %s: %s", project_path, exc)
 
     try:
         origin_out, _ = await _run_command("git", "remote", "get-url", "origin", cwd=project_path, timeout=60)
         origin_url = origin_out
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("projects: git remote get-url origin упал для %s: %s", project_path, exc)
 
     try:
         current_sha_out, _ = await _run_command("git", "rev-parse", "HEAD", cwd=project_path, timeout=60)
         current_sha = current_sha_out
-    except Exception:
+    except Exception as exc:
+        logger.debug("projects: git rev-parse HEAD упал для %s: %s", project_path, exc)
         current_sha = ""
 
     current_version = _read_local_app_version(project_path)
@@ -481,7 +484,8 @@ async def _build_app_update_preview(project_path: Path) -> dict:
             changelog_text=remote_changelog,
             fallback=APP_VERSION,
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("projects: resolve_app_version с remote_config упал, используем fallback без config: %s", exc)
         target_version = resolve_app_version(
             config_text=None,
             changelog_text=remote_changelog,
@@ -721,7 +725,7 @@ async def _run_app_update_job(app, project_id: str, operation_id: str) -> None:
 async def list_projects(request: Request):
     """Возвращает все проекты, сортировка по дате создания."""
     state = request.app.state.db
-    rows = state.fetchall(
+    rows = await state.afetchall(
         "SELECT id, name, description, path, git_url, created_at FROM projects ORDER BY created_at ASC"
     )
     return [Project(**dict(r)) for r in rows]
@@ -749,14 +753,14 @@ async def create_project(body: ProjectCreate, request: Request):
             logger.error("Ошибка клонирования %s: %s", body.name, e)
             # Не блокируем создание проекта — просто без path
 
-    state.execute(
+    await state.aexecute(
         """
         INSERT INTO projects (id, name, description, path, git_url, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (project_id, body.name, body.description, path, git_url, now),
     )
-    state.commit()
+    await state.acommit()
 
     logger.info("Создан проект %s (%s)", project_id, body.name)
     return Project(
@@ -778,7 +782,7 @@ async def update_project(project_id: str, body: ProjectUpdate, request: Request)
     """Частично обновляет поля проекта."""
     state = request.app.state.db
 
-    row = state.fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
+    row = await state.afetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
     if not row:
         raise HTTPException(status_code=404, detail=f"Проект {project_id} не найден")
 
@@ -804,11 +808,11 @@ async def update_project(project_id: str, body: ProjectUpdate, request: Request)
     if updates:
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [project_id]
-        state.execute(f"UPDATE projects SET {set_clause} WHERE id = ?", tuple(values))
-        state.commit()
+        await state.aexecute(f"UPDATE projects SET {set_clause} WHERE id = ?", tuple(values))
+        await state.acommit()
         logger.info("Проект %s обновлён: %s", project_id, list(updates.keys()))
 
-    updated = state.fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
+    updated = await state.afetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
     return Project(**dict(updated))
 
 
@@ -824,16 +828,18 @@ async def delete_project(project_id: str, request: Request):
     """
     state = request.app.state.db
 
-    row = state.fetchone("SELECT id FROM projects WHERE id = ?", (project_id,))
+    row = await state.afetchone("SELECT id FROM projects WHERE id = ?", (project_id,))
     if not row:
         raise HTTPException(status_code=404, detail=f"Проект {project_id} не найден")
 
-    # Удаляем каскадно
-    state.execute("DELETE FROM chat_messages WHERE project_id = ?", (project_id,))
-    state.execute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
-    state.execute("DELETE FROM documents WHERE project_id = ?", (project_id,))
-    state.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-    state.commit()
+    # Удаляем каскадно: сначала дочерние сущности, затем сессии, затем сам проект
+    await state.aexecute("DELETE FROM chat_messages WHERE project_id = ?", (project_id,))
+    await state.aexecute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
+    await state.aexecute("DELETE FROM documents WHERE project_id = ?", (project_id,))
+    # chat_sessions не имеют FK cascade → удаляем явно, иначе orphan-строки остаются навсегда
+    await state.aexecute("DELETE FROM chat_sessions WHERE project_id = ?", (project_id,))
+    await state.aexecute("DELETE FROM projects WHERE id = ?", (project_id,))
+    await state.acommit()
 
     logger.info("Проект %s удалён", project_id)
 
@@ -846,7 +852,7 @@ async def delete_project(project_id: str, request: Request):
 async def sync_repos(request: Request):
     """Git pull всех проектов с git_url. Клонирует если ещё нет."""
     state = request.app.state.db
-    rows = state.fetchall(
+    rows = await state.afetchall(
         "SELECT id, name, git_url, path FROM projects WHERE git_url != '' AND git_url IS NOT NULL"
     )
     results = []
@@ -856,8 +862,8 @@ async def sync_repos(request: Request):
             new_path = await _clone_or_pull(row["git_url"], row["name"])
             # Обновить path если изменился
             if new_path != row.get("path"):
-                state.execute("UPDATE projects SET path = ? WHERE id = ?", (new_path, row["id"]))
-                state.commit()
+                await state.aexecute("UPDATE projects SET path = ? WHERE id = ?", (new_path, row["id"]))
+                await state.acommit()
             results.append({"name": row["name"], "status": "ok", "path": new_path})
         except Exception as e:
             results.append({"name": row["name"], "status": "error", "error": str(e)})

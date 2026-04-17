@@ -130,12 +130,12 @@ async def put_sandbox(payload: SandboxPayload, request: Request):
     if payload.mode not in SANDBOX_VALID:
         return {"ok": False, "error": f"Неверный режим. Разрешены: {sorted(SANDBOX_VALID)}"}
     state = request.app.state.db
-    state.execute(
+    await state.aexecute(
         "INSERT INTO app_settings (key, value) VALUES ('codex_sandbox', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (payload.mode,),
     )
-    state.commit()
+    await state.acommit()
     logger.info("Codex sandbox mode → %s", payload.mode)
     return {"ok": True, "mode": payload.mode}
 
@@ -211,19 +211,19 @@ async def put_aitunnel_key(payload: AITunnelKeyPayload, request: Request):
     state = request.app.state.db
     key = payload.api_key.strip()
     if not key:
-        state.execute("DELETE FROM app_settings WHERE key = 'aitunnel_api_key'")
+        await state.aexecute("DELETE FROM app_settings WHERE key = 'aitunnel_api_key'")
         # Возвращаемся к env
         env_key = os.getenv("AITUNNEL_API_KEY", "")
         if env_key:
             os.environ["AITUNNEL_API_KEY"] = env_key
         logger.info("AITunnel key: очищен, fallback на env (%s)", "есть" if env_key else "нет")
     else:
-        state.execute(
+        await state.aexecute(
             "INSERT INTO app_settings (key, value) VALUES ('aitunnel_api_key', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key,),
         )
         os.environ["AITUNNEL_API_KEY"] = key
         logger.info("AITunnel key: обновлён (длина %d)", len(key))
-    state.commit()
+    await state.acommit()
     return {"ok": True, "present": bool(key), "masked": _mask(key)}

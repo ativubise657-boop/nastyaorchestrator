@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 100
+exclude = ["data/", ".venv/", "build/", "dist/", "__pycache__/"]
+
+[tool.ruff.lint]
+# E/F/W — базовые ошибки pycodestyle + pyflakes, I — сортировка импортов
+select = ["E", "F", "W", "I"]
+# E501 — длина строки, пока игнорируем (много длинных строк в legacy-коде)
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+# Мягкий режим — не требуем аннотаций везде
+check_untyped_defs = false
