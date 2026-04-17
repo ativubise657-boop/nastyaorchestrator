@@ -18,6 +18,7 @@ from worker.circuit_breaker import can_execute, record_crash, record_success
 from worker.quality_gate import evaluate as qg_evaluate, should_retry as qg_should_retry
 from worker.commands import is_command, handle_command
 from worker.aitunnel_executor import AITunnelExecutor
+from worker.base_executor import ExecuteRequest, build_execute_request
 from worker.gemini_executor import GeminiExecutor
 from worker.config import WorkerConfig
 from worker.document_extractor import extract_documents
@@ -113,8 +114,8 @@ class Poller:
             from worker.bitrix_client import is_crm_query
             if is_crm_query(prompt):
                 return "Ищу в Bitrix24 CRM..."
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("poller: bitrix_client недоступен, CRM-фаза пропущена: %s", exc)
 
         # Документы — определяем конкретный запрошенный
         if documents:
@@ -200,8 +201,8 @@ class Poller:
                 pass
             try:
                 await self._http.aclose()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("poller: ошибка при закрытии HTTP-клиента: %s", exc)
             logger.info("Worker остановлен.")
 
     # ─── Внутренние методы ──────────────────────────────────────────
@@ -360,16 +361,13 @@ class Poller:
         mode: str = task.get("mode") or resolve_mode(prompt)
         model: str = task.get("model", "gpt-5.4")
 
-        # Контекст из backend (история чата + проект + git_url + all_projects + документы)
-        chat_history: list[dict] | None = task.get("chat_history")
+        # Ряд полей нужен до вызова executor (detect_phase, is_command) —
+        # извлекаем заранее, остальное уйдёт в ExecuteRequest через build_execute_request.
         project: dict | None = task.get("project")
+        chat_history: list[dict] | None = task.get("chat_history")
         git_url: str | None = task.get("git_url")
         all_projects: list[dict] | None = task.get("all_projects")
         documents: list[dict] | None = task.get("documents")
-        doc_folders: list[str] | None = task.get("doc_folders")
-        completed_tasks: list[dict] | None = task.get("completed_tasks")
-        documents_dir: str | None = task.get("documents_dir")
-        codex_sandbox: str | None = task.get("codex_sandbox")
 
         # Перехват встроенных команд (без вызова Codex CLI)
         if is_command(prompt):
@@ -428,22 +426,12 @@ class Poller:
 
             thinking_task = asyncio.create_task(thinking_pinger())
 
-            result = await executor.execute(
-                prompt=prompt,
-                project_path=project_path,
-                mode=mode,
-                model=model,
-                chat_history=chat_history,
-                project=project,
-                git_url=git_url,
-                all_projects=all_projects,
-                documents=documents,
-                doc_folders=doc_folders,
-                completed_tasks=completed_tasks,
-                documents_dir=documents_dir,
-                codex_sandbox=codex_sandbox,
-                on_chunk=on_chunk,
-            )
+            # Строим единый ExecuteRequest — один объект вместо 13+ параметров.
+            # workspace берём из task["project_path"] с fallback на default_project_path.
+            req = build_execute_request({**task, "project_path": project_path, "mode": mode})
+            req.on_chunk = on_chunk
+
+            result = await executor.execute(req)
 
             thinking_task.cancel()
 

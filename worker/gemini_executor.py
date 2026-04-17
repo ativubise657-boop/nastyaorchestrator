@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from worker.base_executor import BaseExecutor, PROJECT_ROOT
+from worker.base_executor import BaseExecutor, ExecuteRequest, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -130,21 +130,19 @@ class GeminiExecutor(BaseExecutor):
         parts.append({"text": prompt})
         return parts
 
-    async def execute(
-        self,
-        prompt: str,
-        project_path: str | None = None,
-        mode: str = "solo",
-        model: str = "gemini-2.5-flash",
-        chat_history: list[dict] | None = None,
-        project: dict | None = None,
-        git_url: str | None = None,
-        all_projects: list[dict] | None = None,
-        documents: list[dict] | None = None,
-        doc_folders: list[str] | None = None,
-        completed_tasks: list[dict] | None = None,
-        on_chunk: Callable[[str], Awaitable[None]] | None = None,
-    ) -> dict[str, Any]:
+    async def execute(self, req: ExecuteRequest) -> dict[str, Any]:
+        """Выполнить задачу через Gemini API.
+
+        Принимает единый ExecuteRequest вместо 13+ отдельных параметров.
+        Внутренняя логика не изменена — только обращение к полям через req.
+        Gemini не использует git_url / crm_context — передаём None явно.
+        """
+        # Локальные переменные для краткости внутри метода
+        prompt = req.prompt
+        mode = req.mode
+        documents = req.documents
+        on_chunk: Callable[[str], Awaitable[None]] | None = req.on_chunk  # type: ignore[assignment]
+
         # Backend URL из env (worker всегда знает свой сервер)
         backend_url = os.environ.get("ORCH_SERVER_URL", "http://127.0.0.1:8781")
         api_key = await _get_gemini_api_key(backend_url)
@@ -157,19 +155,19 @@ class GeminiExecutor(BaseExecutor):
 
         self._cancelled = False
 
-        workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
+        workspace = self._existing_dir(req.workspace) or str(PROJECT_ROOT)
 
         # Строим контекст как для остальных executor-ов.
         # workspace → _build_context_prompt подмешает AGENTS.md из vault.
         context_prompt = await self._build_context_prompt(
             prompt,
-            chat_history,
-            project,
+            req.chat_history,
+            req.project,
             None,  # github_context — не нужен для чат-модели
             documents,
             None,  # crm_context
-            doc_folders,
-            completed_tasks,
+            req.doc_folders,
+            req.completed_tasks,
             workspace=workspace,
         )
         full_prompt = self._build_prompt(context_prompt, mode)

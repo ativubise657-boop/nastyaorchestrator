@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -24,6 +25,73 @@ from backend.core.file_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ExecuteRequest:
+    """Единый контракт вызова любого executor-а.
+
+    Заменяет 13-15 отдельных параметров в сигнатуре execute(). Все executor-ы
+    принимают один объект — нет риска рассинхронизации при добавлении полей.
+
+    Обязательные поля: prompt, workspace, model, mode.
+    Остальные — опциональны (не каждый executor использует всё).
+    """
+
+    # ── Обязательные ──────────────────────────────────────────────────────
+    prompt: str                          # текст сообщения от Насти
+    workspace: str                       # путь к рабочей папке
+    model: str                           # gpt-5.4 / glm-4.7-flash / gemini-2.5-flash / ...
+    mode: str                            # auto / ag+ / rev / solo
+
+    # ── Контекст задачи ───────────────────────────────────────────────────
+    session_id: str | None = None
+    task_id: str | None = None
+    chat_history: list[dict] | None = None
+    project: dict | None = None
+    documents: list[dict] | None = None
+    doc_folders: list[str] | None = None
+    completed_tasks: list[dict] | None = None
+    github_context: str | None = None    # уже подтянутый контекст (если есть)
+    crm_context: str | None = None       # уже подтянутый CRM контекст
+
+    # ── Источники для _fetch_contexts_parallel ────────────────────────────
+    git_url: str | None = None           # URL репо для GitHub-контекста
+    all_projects: list[dict] | None = None  # все проекты (альтернатива git_url)
+
+    # ── Специфика отдельных executor-ов ──────────────────────────────────
+    documents_dir: str | None = None     # папка документов (только CodexExecutor)
+    codex_sandbox: str | None = None     # sandbox-режим CLI (только CodexExecutor)
+
+    # ── Callback стриминга ────────────────────────────────────────────────
+    # Не dataclass-поле в стандартном смысле — Callable не сериализуется,
+    # но удобно держать рядом с запросом. Default — None (нет стриминга).
+    on_chunk: object = field(default=None, repr=False)
+
+
+def build_execute_request(task: dict) -> "ExecuteRequest":
+    """Строит ExecuteRequest из task-dict (то что приходит из /api/queue/next).
+
+    Удобная фабрика — один вызов вместо 15+ keyword-аргументов в call site.
+    Имена полей соответствуют ключам task-dict из backend/api/system.py.
+    """
+    return ExecuteRequest(
+        prompt=task["prompt"],
+        workspace=task.get("project_path", ""),
+        model=task.get("model", "gpt-5.4"),
+        mode=task.get("mode", "auto"),
+        session_id=task.get("session_id"),
+        task_id=task.get("id"),
+        chat_history=task.get("chat_history"),
+        project=task.get("project"),
+        documents=task.get("documents"),
+        doc_folders=task.get("doc_folders"),
+        completed_tasks=task.get("completed_tasks"),
+        git_url=task.get("git_url"),
+        all_projects=task.get("all_projects"),
+        documents_dir=task.get("documents_dir"),
+        codex_sandbox=task.get("codex_sandbox"),
+    )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -182,63 +250,96 @@ class BaseExecutor:
         return crm_context or None
 
     @staticmethod
-    def _section_documents(documents: list[dict] | None) -> str | None:
-        """Документы проекта с разметкой под модель (Issue 1.1A + 2.1C).
+    def _format_single_doc(doc: dict) -> str:
+        """Форматирует одну запись документа в строку для промпта (Issue 1.1A + 2.1C).
 
         Ветки:
           - изображение + requested → "прикреплено к первому сообщению"
           - content есть           → inline code block
           - requested без content  → честное "не распарсилось, не пытайся читать с диска"
           - просто listing        → "#N имя (size байт)" + ⚠ если parse_status=failed
+        """
+        num = doc.get("num", "?")
+        fname = doc.get("filename", "?")
+        size = doc.get("size", 0)
+        ext = Path(fname).suffix.lower()
+        content = doc.get("content")
+        parse_failed = doc.get("parse_status") == "failed"
 
-        Модель видит все документы проекта как listing — сама решает запросить content
-        (Настя напишет "#3" или назовёт имя). Magic keyword-эвристика убрана.
+        if ext in IMAGE_EXTENSIONS and doc.get("requested"):
+            if content:
+                # Gemini распарсил картинку → кладём текстовое описание в промпт.
+                # Модель читает это без vision-режима. Если у CLI есть vision,
+                # она также увидит саму картинку через --image флаг.
+                return (
+                    f"#{num} {fname} (изображение; текстовое описание ниже,"
+                    f" сам файл также прикреплён):\n```\n{content}\n```"
+                )
+            else:
+                return f"#{num} {fname} (изображение прикреплено к первому сообщению)"
+        elif content:
+            return f"#{num} {fname}:\n```\n{content}\n```"
+        elif doc.get("requested"):
+            return (
+                f"#{num} {fname} ({size} байт) — файл приложен, но автоматически распарсить содержимое не удалось. "
+                f"Не пытайся читать файл с диска — инструментов для парсинга этого формата нет. "
+                f"Честно скажи Насте, что видишь имя и размер файла, но содержимого не видишь; "
+                f"предложи прислать текстовую версию или описать содержимое своими словами."
+            )
+        elif parse_failed:
+            # Plain listing, но с предупреждением что content не извлечён
+            return (
+                f"#{num} {fname} ({size} байт) ⚠ содержимое не извлечено — "
+                f"если Настя попросит его разобрать, сразу скажи что прочитать не получится"
+            )
+        else:
+            return f"#{num} {fname} ({size} байт)"
+
+    @staticmethod
+    def _section_documents(documents: list[dict] | None) -> str | None:
+        """Документы с разметкой под модель — две подсекции: чат и проект (Issue 1.1A + 2.1C + chat-sessions).
+
+        Нумерация сквозная — поле doc["num"] проставляется выше по стеку, здесь используем как есть.
+
+        Разделение по полю scope:
+          - "session" → документы текущего чата (clipboard-картинки и т.п.)
+          - "project"  → загруженные через UI PDF/TZ/прайсы (видны во всех чатах)
+          - отсутствует → legacy payload, все идут в project (fallback, не падаем)
         """
         if not documents:
             return None
-        doc_parts = [
-            "\n--- Документы проекта (обращайся по #номеру) ---",
-            "Если Настя не прикрепила документ явно и не назвала его в сообщении — "
-            "ты видишь только listing (имя+размер+статус). Спроси какой именно нужен.",
-        ]
-        for doc in documents:
-            num = doc.get("num", "?")
-            fname = doc.get("filename", "?")
-            size = doc.get("size", 0)
-            ext = Path(fname).suffix.lower()
-            content = doc.get("content")
-            parse_failed = doc.get("parse_status") == "failed"
 
-            if ext in IMAGE_EXTENSIONS and doc.get("requested"):
-                if content:
-                    # Gemini распарсил картинку → кладём текстовое описание в промпт.
-                    # Модель читает это без vision-режима. Если у CLI есть vision,
-                    # она также увидит саму картинку через --image флаг.
-                    doc_parts.append(
-                        f"#{num} {fname} (изображение; текстовое описание ниже,"
-                        f" сам файл также прикреплён):\n```\n{content}\n```"
-                    )
-                else:
-                    doc_parts.append(f"#{num} {fname} (изображение прикреплено к первому сообщению)")
-            elif content:
-                doc_parts.append(f"#{num} {fname}:\n```\n{content}\n```")
-            elif doc.get("requested"):
-                doc_parts.append(
-                    f"#{num} {fname} ({size} байт) — файл приложен, но автоматически распарсить содержимое не удалось. "
-                    f"Не пытайся читать файл с диска — инструментов для парсинга этого формата нет. "
-                    f"Честно скажи Насте, что видишь имя и размер файла, но содержимого не видишь; "
-                    f"предложи прислать текстовую версию или описать содержимое своими словами."
-                )
-            elif parse_failed:
-                # Plain listing, но с предупреждением что content не извлечён
-                doc_parts.append(
-                    f"#{num} {fname} ({size} байт) ⚠ содержимое не извлечено — "
-                    f"если Настя попросит его разобрать, сразу скажи что прочитать не получится"
-                )
-            else:
-                doc_parts.append(f"#{num} {fname} ({size} байт)")
-        doc_parts.append("--- Конец документов ---")
-        return "\n".join(doc_parts)
+        # Разделяем по scope; legacy (нет поля) → всё в project
+        session_docs = [d for d in documents if d.get("scope") == "session"]
+        project_docs = [d for d in documents if d.get("scope") != "session"]
+
+        # Обе группы пусты — такого быть не должно при непустом documents,
+        # но на всякий случай возвращаем None
+        if not session_docs and not project_docs:
+            return None
+
+        result_parts: list[str] = []
+
+        # --- Секция документов чата ---
+        if session_docs:
+            result_parts.append("\n--- Документы этого чата (обращайся по #номеру) ---")
+            for doc in session_docs:
+                result_parts.append(BaseExecutor._format_single_doc(doc))
+
+        # --- Секция документов проекта ---
+        if project_docs:
+            result_parts.append("\n--- Документы проекта (видны во всех чатах, обращайся по #номеру) ---")
+            for doc in project_docs:
+                result_parts.append(BaseExecutor._format_single_doc(doc))
+
+        # Подсказка про listing — один раз в конце, независимо от количества секций
+        result_parts.append(
+            "\n--- (если применимо) ---\n"
+            "Если Настя не прикрепила документ явно и не назвала его в сообщении — "
+            "ты видишь только listing (имя+размер+статус). Спроси какой именно нужен."
+        )
+        result_parts.append("--- Конец документов ---")
+        return "\n".join(result_parts)
 
     @staticmethod
     def _section_doc_folders(doc_folders: list[str] | None) -> str | None:

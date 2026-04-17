@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from worker.aitunnel_tools import AITunnelToolRunner, get_tool_definitions
-from worker.base_executor import BaseExecutor, PROJECT_ROOT
+from worker.base_executor import BaseExecutor, ExecuteRequest, PROJECT_ROOT
 from worker.models_registry import get_model_id
 
 logger = logging.getLogger(__name__)
@@ -61,21 +61,12 @@ class AITunnelExecutor(BaseExecutor):
         if self._tool_runner is not None:
             self._tool_runner.cancel()
 
-    async def execute(
-        self,
-        prompt: str,
-        project_path: str | None = None,
-        mode: str = "solo",
-        model: str = "glm-5-turbo",
-        chat_history: list[dict] | None = None,
-        project: dict | None = None,
-        git_url: str | None = None,
-        all_projects: list[dict] | None = None,
-        documents: list[dict] | None = None,
-        doc_folders: list[str] | None = None,
-        completed_tasks: list[dict] | None = None,
-        on_chunk: Callable[[str], Awaitable[None]] | None = None,
-    ) -> dict[str, Any]:
+    async def execute(self, req: ExecuteRequest) -> dict[str, Any]:
+        """Выполнить задачу через AI Tunnel API.
+
+        Принимает единый ExecuteRequest вместо 13+ отдельных параметров.
+        Внутренняя логика не изменена — только обращение к полям через req.
+        """
         if not self.api_key:
             return {
                 "status": "failed",
@@ -83,24 +74,31 @@ class AITunnelExecutor(BaseExecutor):
                 "error": "AITUNNEL_API_KEY не настроен. Добавь ключ AI Tunnel в окружение worker.",
             }
 
+        # Локальные переменные для краткости внутри метода
+        prompt = req.prompt
+        mode = req.mode
+        model = req.model
+        documents = req.documents
+        on_chunk: Callable[[str], Awaitable[None]] | None = req.on_chunk  # type: ignore[assignment]
+
         self._cancelled = False
 
         # Fix 4.4A: GitHub и CRM контексты параллельно (asyncio.gather в BaseExecutor)
         github_context, crm_context = await self._fetch_contexts_parallel(
-            git_url=git_url, all_projects=all_projects, prompt=prompt,
+            git_url=req.git_url, all_projects=req.all_projects, prompt=prompt,
         )
 
-        workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
+        workspace = self._existing_dir(req.workspace) or str(PROJECT_ROOT)
 
         context_prompt = await self._build_context_prompt(
             prompt,
-            chat_history,
-            project,
+            req.chat_history,
+            req.project,
             github_context,
             documents,
             crm_context,
-            doc_folders,
-            completed_tasks,
+            req.doc_folders,
+            req.completed_tasks,
             workspace=workspace,
         )
         full_prompt = self._build_prompt(context_prompt, mode)

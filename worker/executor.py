@@ -25,6 +25,7 @@ import httpx  # noqa: F401  # используется в других моду�
 
 from worker.base_executor import (
     BaseExecutor,
+    ExecuteRequest,  # re-export для удобного импорта из executor
     IMAGE_EXTENSIONS,  # re-export
     NON_READABLE_BINARY_EXTS,  # re-export
     PROJECT_ROOT,  # re-export
@@ -34,6 +35,7 @@ from worker.models_registry import get_model_id
 __all__ = [
     "BaseExecutor",
     "CodexExecutor",
+    "ExecuteRequest",
     "StreamEvent",
     "MODEL_REASONING_EFFORTS",
     "IMAGE_EXTENSIONS",
@@ -213,39 +215,35 @@ class CodexExecutor(BaseExecutor):
 
         return error_msg
 
-    async def execute(
-        self,
-        prompt: str,
-        project_path: str | None = None,
-        mode: str = "solo",
-        model: str = "gpt-5.4",
-        chat_history: list[dict] | None = None,
-        project: dict | None = None,
-        git_url: str | None = None,
-        all_projects: list[dict] | None = None,
-        documents: list[dict] | None = None,
-        doc_folders: list[str] | None = None,
-        completed_tasks: list[dict] | None = None,
-        documents_dir: str | None = None,
-        codex_sandbox: str | None = None,
-        on_chunk: Callable[[str], Awaitable[None]] | None = None,
-    ) -> dict[str, Any]:
+    async def execute(self, req: ExecuteRequest) -> dict[str, Any]:
+        """Выполнить задачу через Codex CLI.
+
+        Принимает единый ExecuteRequest вместо 13+ отдельных параметров.
+        Внутренняя логика не изменена — только обращение к полям через req.
+        """
+        # Локальные переменные для краткости внутри метода
+        prompt = req.prompt
+        mode = req.mode
+        model = req.model
+        documents = req.documents
+        on_chunk: Callable[[str], Awaitable[None]] | None = req.on_chunk  # type: ignore[assignment]
+
         # Fix 4.4A: GitHub и CRM контексты параллельно (asyncio.gather в BaseExecutor)
         github_context, crm_context = await self._fetch_contexts_parallel(
-            git_url=git_url, all_projects=all_projects, prompt=prompt,
+            git_url=req.git_url, all_projects=req.all_projects, prompt=prompt,
         )
 
-        workspace = self._existing_dir(project_path) or str(PROJECT_ROOT)
+        workspace = self._existing_dir(req.workspace) or str(PROJECT_ROOT)
 
         context_prompt = await self._build_context_prompt(
             prompt,
-            chat_history,
-            project,
+            req.chat_history,
+            req.project,
             github_context,
             documents,
             crm_context,
-            doc_folders,
-            completed_tasks,
+            req.doc_folders,
+            req.completed_tasks,
             workspace=workspace,
         )
         full_prompt = self._build_prompt(context_prompt, mode)
@@ -259,6 +257,7 @@ class CodexExecutor(BaseExecutor):
         # Папка документов проекта — всегда добавляем в --add-dir, даже если
         # конкретные файлы не прикреплены. Codex сможет читать/искать по ней
         # когда Настя спросит "что лежит в документах" или "найди файл X".
+        documents_dir = req.documents_dir
         if documents_dir and os.path.isdir(documents_dir):
             _dd = str(Path(documents_dir).resolve())
             try:
@@ -273,14 +272,14 @@ class CodexExecutor(BaseExecutor):
             workspace=workspace,
             image_paths=image_paths,
             add_dirs=add_dirs,
-            sandbox=codex_sandbox or "danger-full-access",
+            sandbox=req.codex_sandbox or "danger-full-access",
             reasoning_effort=effort,
         )
 
         logger.info(
             "Запускаем Codex CLI: mode=%s, sandbox=%s, images=%d, workspace=%s, add_dirs=%s, prompt_len=%d",
             mode,
-            codex_sandbox or "danger-full-access",
+            req.codex_sandbox or "danger-full-access",
             len(image_paths),
             workspace,
             add_dirs,
@@ -410,8 +409,8 @@ class CodexExecutor(BaseExecutor):
             try:
                 proc.kill()
                 await proc_wait_task
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("executor: proc.kill() после таймаута упал (процесс уже завершился?): %s", exc)
             final_event.set()
             await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
             self._current_proc = None
