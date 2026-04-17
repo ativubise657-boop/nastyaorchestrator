@@ -376,29 +376,33 @@ class State:
         return self.conn.execute(sql, params).fetchall()
 
     # ------------------------------------------------------------------
-    # Async wrappers — не блокируют event loop FastAPI/uvicorn.
-    # Каждый вызов запускает sync-метод в отдельном потоке через thread pool.
-    # Sync-методы выше СОХРАНЕНЫ — worker/ использует их в sync контексте.
-    # thread-local соединения (self._local) гарантируют, что каждый поток
-    # получает своё SQLite-соединение — race conditions исключены.
+    # Async-обёртки — совместимость с интерфейсом async handlers.
+    #
+    # РЕШЕНИЕ (2026-04-17): выполняют sync-метод НАПРЯМУЮ, без thread pool.
+    # Причина: asyncio.to_thread создавал новые threads на каждый вызов,
+    # thread-local connections открывали разные WAL-транзакции, которые
+    # конкурировали за write lock. На Windows SQLite это давало стабильный
+    # `database is locked` в CI (даже при busy_timeout=30s), т.к. transaction
+    # в одном thread могла не закоммититься к моменту запроса в другом.
+    #
+    # Трейд-офф: event loop блокируется на SQLite-операциях (типично 1-10мс).
+    # Для десктоп-приложения на одного пользователя это приемлемо — SSE и
+    # фоновые задачи не страдают (они всё равно I/O-bound).
+    # Если появится нагрузка (много concurrent SSE клиентов) — заменим на
+    # единый dedicated writer-thread с очередью.
     # ------------------------------------------------------------------
 
     async def aexecute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
-        """Async-обёртка над execute — выполняется в thread pool, не блокирует event loop."""
-        return await asyncio.to_thread(self.execute, sql, params)
+        return self.execute(sql, params)
 
     async def afetchone(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
-        """Async-обёртка над fetchone."""
-        return await asyncio.to_thread(self.fetchone, sql, params)
+        return self.fetchone(sql, params)
 
     async def afetchall(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
-        """Async-обёртка над fetchall."""
-        return await asyncio.to_thread(self.fetchall, sql, params)
+        return self.fetchall(sql, params)
 
     async def acommit(self) -> None:
-        """Async-обёртка над commit."""
-        await asyncio.to_thread(self.commit)
+        self.commit()
 
     async def aexecutemany(self, sql: str, params_seq) -> sqlite3.Cursor:
-        """Async-обёртка над executemany."""
-        return await asyncio.to_thread(self.executemany, sql, params_seq)
+        return self.executemany(sql, params_seq)
