@@ -68,6 +68,8 @@ export function ChatPanel() {
   const online = useWorkerOnline()
   const selectedModel = useSelectedModel()
   const { handleSend, sendingMessage, selectedProjectId, textareaRef, autoResize } = useChat()
+  // Нужен для привязки clipboard-картинок к текущей сессии (fix v35).
+  const currentSessionId = useStore((s) => s.currentSessionId)
   const chatFontSize = useChatFontSize()
   const setChatFontSize = useStore((s) => s.setChatFontSize)
   const taskPhase = useStore((s) => s.taskPhase)
@@ -234,7 +236,13 @@ export function ChatPanel() {
           const isScratch = file.type.startsWith('image/')
           const formData = new FormData()
           formData.append('file', file)
-          const url = `/api/documents/${selectedProjectId}/upload${isScratch ? '?is_scratch=true' : ''}`
+          // session_id обязателен для clipboard-картинок (is_scratch=true) — иначе
+          // документ становится project-wide и виден LLM во всех чатах.
+          // Это и был баг "модель видит #1 и #3 image.png" в v34.
+          const params = new URLSearchParams()
+          if (isScratch) params.set('is_scratch', 'true')
+          if (isScratch && currentSessionId) params.set('session_id', currentSessionId)
+          const url = `/api/documents/${selectedProjectId}/upload${params.toString() ? '?' + params.toString() : ''}`
           const resp = await fetch(url, {
             method: 'POST',
             body: formData,

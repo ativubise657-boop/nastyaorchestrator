@@ -427,13 +427,22 @@ def _enrich_documents(state, task: dict) -> list[dict]:
     project_id = task["project_id"]
     task_session_id = task.get("session_id")
 
-    # Выбираем документы с учётом scope сессии
+    # Выбираем документы с учётом scope сессии.
+    # Правило (fix v35):
+    #   - is_scratch=1 (clipboard-картинки) должны быть session-scoped строго:
+    #     видны только своей сессии, orphan (session_id IS NULL) НЕ рендерятся —
+    #     они структурно ошибочны и были причиной бага "модель видит #1 и #3"
+    #   - is_scratch=0 (PDF/TZ загруженные через DocPanel) — project-wide,
+    #     видны во всех сессиях (session_id IS NULL)
     if task_session_id:
         doc_rows = state.fetchall(
             "SELECT id, filename, path, size, content_type, session_id, "
             "COALESCE(parse_status, 'skipped') AS parse_status "
             "FROM documents WHERE project_id = ? "
-            "AND (session_id = ? OR session_id IS NULL) "
+            "AND ("
+            "    session_id = ? "
+            "    OR (session_id IS NULL AND COALESCE(is_scratch, 0) = 0)"
+            ") "
             "ORDER BY created_at DESC LIMIT 50",
             (project_id, task_session_id),
         )
