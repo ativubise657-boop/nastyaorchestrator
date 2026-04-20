@@ -390,6 +390,37 @@ git push --force origin v33       # remote force move
 
 **Теги:** #git #tags #force-push #release-safety #destructive-op
 
+## #20 [Integration] TS-тайпы ≠ runtime API-контракт — frontend call-sites audit нужен после schema changes
+
+**Проблема:** В v33 добавили `session_id` в `documents`. Backend upload endpoint принимает `session_id: str | None = None` — optional. Frontend `ChatPanel.tsx:237` при upload clipboard-картинки **НЕ передавал** session_id → все clipboard-документы сохранялись с `session_id=NULL` → становились project-wide → виделись LLM во всех чатах.
+
+Баг пережил v33 → v34 (Quality Release) и пойман **только в v35** когда Дима руками протестировал UX: "модель видит две картинки" — **та же самая проблема** что чинили chat-сессиями изначально.
+
+**Почему не поймали:**
+- TypeScript молчал — query params в fetch URL не в строгой схеме, передача любых string-ов OK
+- tsc зелёный, pytest зелёный (тестировал backend изолированно, не real flow)
+- Rev big #3 отметил это как 🟡 риск по GET endpoint, но POST upload не проверил детально
+- CHANGELOG-описание «изоляция картинок» создавало иллюзию что всё работает
+
+**Уроки:**
+
+1. **Integration-тест обязателен на critical UX flow.** Для chat-sessions нужен был e2e: upload clipboard → check БД что session_id прописался. Юнит-тесты backend в изоляции бесполезны для cross-boundary багов.
+
+2. **Runtime-контракт сильнее типа-совместимости.** Если поле REQUIRED по смыслу (как session_id для is_scratch) — делай его required на бэкенде:
+   ```python
+   if is_scratch and not session_id:
+       raise HTTPException(422, "session_id обязателен для clipboard-картинок")
+   ```
+   Тогда frontend упадёт сразу при разработке, а не в проде через 3 релиза.
+
+3. **После schema changes — `grep endpoint-url` во ВСЕХ fronted файлах.** Не только audit backend (урок #15), но все call-sites на фронте. Каждый должен быть явно обновлён чтобы передавать новое обязательное поле.
+
+4. **Dima's manual test > авто-тесты** для UX-сценариев. Даже 245 зелёных pytest не заменят "запусти приложение и попробуй приложить картинку". После мажорного релиза — обязательно dogfood session.
+
+**Маркер проблемы:** фича задекларирована работающей, тесты зелёные, но реальный UX сценарий показывает регрессию. Значит integration-тест отсутствует.
+
+**Теги:** #integration-testing #runtime-contract #frontend-audit #schema-migration #dogfooding
+
 ## Краткая справка по стеку (2026-04-08)
 
 - **Frontend:** React 19 + Vite (TS)

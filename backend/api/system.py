@@ -491,6 +491,28 @@ def _enrich_documents(state, task: dict) -> list[dict]:
     docs = []
     for i, d in enumerate(doc_rows):
         doc_num = i + 1
+
+        # Fix v37 (два fix-а в одном)
+        # A) scope — label для _section_documents (worker). Был баг: поле не
+        #    проставлялось → все документы попадали в "Документы проекта",
+        #    разделение session/project в prompt не работало.
+        # B) Проблема "модель видит #3 image.png": project-wide image-файлы
+        #    (загруженные через DocPanel когда-то давно) попадали в каждый
+        #    новый чат как listing. Решение: image-файлы НЕ помеченные
+        #    requested (не приложены к сообщению и не упомянуты) и scoped как
+        #    project — пропускаем. Для PDF/DOCX такого фильтра нет — они
+        #    могут быть полезны как референс-материал проекта.
+        doc_scope = "session" if d["session_id"] == task_session_id else "project"
+
+        is_attached = str(d["id"]) in attached_ids
+        is_target = is_attached or (target_num == doc_num)
+
+        # Skip: project-wide image не запрошенный — LLM не должна видеть его
+        # даже как текстовое упоминание в listing. Картинки — visual,
+        # если пользователь не приложил её к сообщению, значит она не релевантна.
+        if doc_scope == "project" and _is_image(d["filename"]) and not is_target:
+            continue
+
         doc_info: dict = {
             "num": doc_num,
             "filename": d["filename"],
@@ -498,13 +520,8 @@ def _enrich_documents(state, task: dict) -> list[dict]:
             "path": d["path"],
             "content_type": d["content_type"],
             "parse_status": d["parse_status"],
+            "scope": doc_scope,
         }
-
-        # Документ считается запрошенным если:
-        # 1) явно приложен к сообщению (attachment_document_ids)
-        # 2) ИЛИ упомянут в промпте по #номер/имени
-        is_attached = str(d["id"]) in attached_ids
-        is_target = is_attached or (target_num == doc_num)
 
         if is_target:
             # Подгружаем Gemini/markitdown-описание из .md рядом — и для image, и для PDF/DOCX.
