@@ -1,0 +1,61 @@
+# Dependabot — auto-PR на обновления зависимостей.
+# Группирует minor/patch в один PR, major — отдельно.
+# Eженедельно: понедельник 08:00 UTC.
+version: 2
+updates:
+  # Python backend + worker
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    groups:
+      python-minor:
+        update-types: ["minor", "patch"]
+    labels:
+      - "deps"
+      - "python"
+
+  # Frontend
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor:
+        update-types: ["minor", "patch"]
+    labels:
+      - "deps"
+      - "frontend"
+
+  # Rust Tauri
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor:
+        update-types: ["minor", "patch"]
+    labels:
+      - "deps"
+      - "rust"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    open-pull-requests-limit: 3
+    labels:
+      - "deps"
+      - "ci"

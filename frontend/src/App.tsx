@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar'
 import { ChatPanel } from './components/ChatPanel'
 import { DocPanel } from './components/DocPanel'
 import { RemoteConfigToast } from './components/RemoteConfigToast'
+import { ErrorToast } from './components/ErrorToast'
 import { TauriUpdateModal } from './components/TauriUpdateModal'
 import { useStore, useSidebarOpen, useSelectedProjectId } from './stores'
 import { useSSE } from './hooks/useSSE'
@@ -147,6 +148,7 @@ export default function App() {
     <div className="app">
       <StatusBar />
       <RemoteConfigToast />
+      <ErrorToast />
       <TauriUpdateModal
         state={updater}
         onInstall={updater.install}

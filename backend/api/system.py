@@ -254,7 +254,9 @@ async def event_stream(request: Request):
     Типы событий: task_update, task_chunk, worker_status, new_message.
     Keepalive каждые 30 секунд.
     """
-    q: asyncio.Queue = asyncio.Queue()
+    # maxsize=100: медленный клиент не накапливает события бесконечно.
+    # Переполненные очереди отсекаются в publish_event — см. main.py.
+    q: asyncio.Queue = asyncio.Queue(maxsize=100)
     request.app.state.event_queues.append(q)
     logger.debug("SSE клиент подключился, всего подключений: %d", len(request.app.state.event_queues))
 

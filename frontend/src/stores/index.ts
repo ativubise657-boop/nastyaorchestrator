@@ -20,7 +20,7 @@ export type { TaskStatus, TaskInfo } from './taskSlice'
 export type { Document, DocViewMode, Folder } from './documentSlice'
 export type { Link } from './linkSlice'
 export type { WorkerStatus } from './workerSlice'
-export type { StatuslineData, ChatMode } from './uiSlice'
+export type { StatuslineData, ChatMode, ToastKind, ToastMessage } from './uiSlice'
 
 // ===== Типы slice-интерфейсов =====
 import type { ProjectSlice } from './projectSlice'

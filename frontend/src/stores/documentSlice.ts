@@ -68,8 +68,14 @@ export const createDocumentSlice: StateCreator<AppStore, [], [], DocumentSlice> 
     try {
       const documents = await apiFetch<Document[]>(`/api/documents/${projectId}`)
       set({ documents, documentsLoading: false })
-    } catch {
+    } catch (err) {
       set({ documentsLoading: false })
+      console.error('loadDocuments failed:', err)
+      const isNetwork = err instanceof TypeError && err.message.includes('fetch')
+      const text = isNetwork
+        ? 'Backend не отвечает. Проверь что приложение запущено.'
+        : `Не удалось загрузить документы: ${err instanceof Error ? err.message : String(err)}`
+      get().showToast({ kind: 'error', text })
     }
   },
 
@@ -78,8 +84,14 @@ export const createDocumentSlice: StateCreator<AppStore, [], [], DocumentSlice> 
     try {
       const data = await apiFetch<{ documents: Document[]; folders: Folder[] }>('/api/documents/all')
       set({ documents: data.documents, folders: data.folders, documentsLoading: false })
-    } catch {
+    } catch (err) {
       set({ documentsLoading: false })
+      console.error('loadAllDocuments failed:', err)
+      const isNetwork = err instanceof TypeError && err.message.includes('fetch')
+      const text = isNetwork
+        ? 'Backend не отвечает. Проверь что приложение запущено.'
+        : `Не удалось загрузить список документов: ${err instanceof Error ? err.message : String(err)}`
+      get().showToast({ kind: 'error', text })
     }
   },
 

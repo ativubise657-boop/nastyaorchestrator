@@ -6,6 +6,13 @@ import type { AppStore } from './index'
 // Режим обработки задачи — передаётся в POST /api/chat/send
 export type ChatMode = 'auto' | 'ag+' | 'rev' | 'solo'
 
+// Toast-уведомление для ошибок / инфо (показывается снизу-справа, auto-dismiss 5 сек)
+export type ToastKind = 'error' | 'info' | 'success'
+export interface ToastMessage {
+  kind: ToastKind
+  text: string
+}
+
 export interface StatuslineData {
   rl_5h_pct: number | null
   rl_5h_reset: number | null
@@ -50,6 +57,11 @@ export interface UISlice {
   // Runtime statusline metrics
   statusline: StatuslineData | null
   setStatusline: (data: StatuslineData | null) => void
+
+  // Toast-уведомление — null когда скрыто
+  toastMessage: ToastMessage | null
+  showToast: (toast: ToastMessage) => void
+  hideToast: () => void
 }
 
 // ===== Реализация slice =====
@@ -104,4 +116,9 @@ export const createUISlice: StateCreator<AppStore, [], [], UISlice> = (set, get)
   // Statusline
   statusline: null,
   setStatusline: (data) => set({ statusline: data }),
+
+  // Toast
+  toastMessage: null,
+  showToast: (toast) => set({ toastMessage: toast }),
+  hideToast: () => set({ toastMessage: null }),
 })

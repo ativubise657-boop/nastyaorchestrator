@@ -97,8 +97,15 @@ export const createChatSlice: StateCreator<AppStore, [], [], ChatSlice> = (set, 
         `/api/chat/history/${sessionId}?limit=100`,
       )
       set({ messages, messagesLoading: false })
-    } catch {
+    } catch (err) {
       set({ messagesLoading: false })
+      console.error('loadMessages failed:', err)
+      // Определяем причину — network error или backend ответил с ошибкой
+      const isNetwork = err instanceof TypeError && err.message.includes('fetch')
+      const text = isNetwork
+        ? 'Backend не отвечает. Проверь что приложение запущено.'
+        : `Не удалось загрузить историю чата: ${err instanceof Error ? err.message : String(err)}`
+      get().showToast({ kind: 'error', text })
     }
   },
 

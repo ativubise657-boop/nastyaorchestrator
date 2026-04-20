@@ -23,6 +23,10 @@ from backend.models import Document, DocumentCreate, Folder, FolderCreate, Folde
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Максимальный размер загружаемого файла (50 МБ).
+# Защищает от OOM при чтении больших файлов в RAM.
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ в байтах
+
 
 def _try_markitdown(file_path: Path, filename: str) -> str | None:
     """Уровень 1: markitdown (PDF через pdfminer внутри, DOCX/XLSX/PPTX/HTML напрямую)."""
@@ -420,9 +424,25 @@ async def upload_document(
     safe_filename = f"{doc_id[:8]}_{original_name}"
     file_path = doc_dir / safe_filename
 
+    # Ранняя проверка по Content-Length (если клиент его прислал).
+    # Для chunked transfer file.size может быть None — тогда проверяем после read().
+    if file.size is not None and file.size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Файл слишком большой: {file.size // (1024 * 1024)} МБ. Максимум — {MAX_FILE_SIZE // (1024 * 1024)} МБ.",
+        )
+
     # Читаем и сохраняем файл
     content = await file.read()
     file_size = len(content)
+
+    # Финальная проверка размера (покрывает chunked transfer без Content-Length)
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Файл слишком большой: {file_size // (1024 * 1024)} МБ. Максимум — {MAX_FILE_SIZE // (1024 * 1024)} МБ.",
+        )
+
     file_path.write_bytes(content)
 
     now = now_iso()

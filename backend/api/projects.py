@@ -832,12 +832,20 @@ async def delete_project(project_id: str, request: Request):
     if not row:
         raise HTTPException(status_code=404, detail=f"Проект {project_id} не найден")
 
-    # Удаляем каскадно: сначала дочерние сущности, затем сессии, затем сам проект
+    # Удаляем каскадно: сначала дочерние сущности, затем сессии, затем сам проект.
+    # Порядок важен: сначала то, что ссылается на другие таблицы (documents → folders).
     await state.aexecute("DELETE FROM chat_messages WHERE project_id = ?", (project_id,))
     await state.aexecute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
+    # documents ссылаются на folders (FK folder_id) → удаляем до folders
     await state.aexecute("DELETE FROM documents WHERE project_id = ?", (project_id,))
+    # links ссылаются на folders → удаляем до folders
+    await state.aexecute("DELETE FROM links WHERE project_id = ?", (project_id,))
+    await state.aexecute("DELETE FROM folders WHERE project_id = ?", (project_id,))
     # chat_sessions не имеют FK cascade → удаляем явно, иначе orphan-строки остаются навсегда
     await state.aexecute("DELETE FROM chat_sessions WHERE project_id = ?", (project_id,))
+    # circuit_breaker: PK = project_id → orphan при удалении проекта
+    # webhooks_raw: нет поля project_id → не каскадим (общий лог входящих webhook-ов)
+    await state.aexecute("DELETE FROM circuit_breaker WHERE project_id = ?", (project_id,))
     await state.aexecute("DELETE FROM projects WHERE id = ?", (project_id,))
     await state.acommit()
 
