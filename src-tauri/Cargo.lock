@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "nastya-orchestrator"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "log",
  "serde",
