@@ -1,6 +1,6 @@
 {
   "name": "nastyaorchestrator",
-  "version": "33.0.0",
+  "version": "34.0.0",
   "description": "",
   "main": "dist/index.js",
   "scripts": {
