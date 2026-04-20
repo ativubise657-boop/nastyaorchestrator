@@ -245,6 +245,7 @@ class CodexExecutor(BaseExecutor):
             req.doc_folders,
             req.completed_tasks,
             workspace=workspace,
+            task_id=req.task_id,
         )
         full_prompt = self._build_prompt(context_prompt, mode)
 

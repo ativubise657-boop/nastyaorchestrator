@@ -100,6 +100,7 @@ class AITunnelExecutor(BaseExecutor):
             req.doc_folders,
             req.completed_tasks,
             workspace=workspace,
+            task_id=req.task_id,
         )
         full_prompt = self._build_prompt(context_prompt, mode)
         user_prompt = self._strip_embedded_system_prompt(full_prompt)
@@ -251,6 +252,25 @@ class AITunnelExecutor(BaseExecutor):
             data_url = self._image_to_data_url(image_path)
             if data_url:
                 content.append({"type": "image_url", "image_url": {"url": data_url}})
+
+        # DEBUG: логируем content с плейсхолдерами вместо base64 чтобы не захламлять лог.
+        # Активируется через env NASTYAORC_LOG_PROMPT=1.
+        if os.environ.get("NASTYAORC_LOG_PROMPT") == "1":
+            sanitized: list[dict[str, Any]] = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    url = part.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        sanitized.append({
+                            "type": "image_url",
+                            "image_url_placeholder": f"[IMAGE {len(url)} байт data-url]",
+                        })
+                    else:
+                        sanitized.append(part)
+                else:
+                    sanitized.append(part)
+            logger.info("DEBUG aitunnel content (%d частей): %r", len(content), sanitized)
+
         return content
 
     @staticmethod

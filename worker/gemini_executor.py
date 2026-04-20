@@ -169,6 +169,7 @@ class GeminiExecutor(BaseExecutor):
             req.doc_folders,
             req.completed_tasks,
             workspace=workspace,
+            task_id=req.task_id,
         )
         full_prompt = self._build_prompt(context_prompt, mode)
 
@@ -176,6 +177,21 @@ class GeminiExecutor(BaseExecutor):
 
         # Собираем multimodal parts
         parts = self._build_parts(full_prompt, image_paths, documents)
+
+        # DEBUG: логируем parts с плейсхолдерами вместо base64 чтобы не захламлять лог.
+        # Активируется через env NASTYAORC_LOG_PROMPT=1.
+        if os.environ.get("NASTYAORC_LOG_PROMPT") == "1":
+            sanitized_parts: list[dict] = []
+            for part in parts:
+                if isinstance(part, dict) and "inline_data" in part:
+                    data = part["inline_data"].get("data", "")
+                    mime = part["inline_data"].get("mime_type", "")
+                    sanitized_parts.append({
+                        "inline_data_placeholder": f"[{mime} {len(data)} байт base64]",
+                    })
+                else:
+                    sanitized_parts.append(part)
+            logger.info("DEBUG gemini parts (%d частей): %r", len(parts), sanitized_parts)
 
         body: dict[str, Any] = {
             "contents": [{"parts": parts}],

@@ -8,6 +8,12 @@
 
 Реальные рантаймы (Codex CLI / HTTP API) наследуют от BaseExecutor и
 добавляют свою специфику (subprocess, HTTP client, tools).
+
+# Как включить debug prompt logging:
+# - Windows (cmd): set NASTYAORC_LOG_PROMPT=1 && запусти приложение
+# - Или в dev-gui-среде: добавить в env перед стартом worker
+# После отправки сообщения файлы prompt-{task_id}.log появятся в рабочей папке worker
+# (обычно там же где worker.log).
 """
 from __future__ import annotations
 
@@ -394,6 +400,7 @@ class BaseExecutor:
         doc_folders: list[str] | None = None,
         completed_tasks: list[dict] | None = None,
         workspace: str | None = None,
+        task_id: str | None = None,
     ) -> str:
         """Оркестратор — порядок секций фиксирован, None-секции скипаются."""
         sections: list[str | None] = [
@@ -408,7 +415,24 @@ class BaseExecutor:
             self._section_chat_history(chat_history),
             f"Настя: {prompt}",
         ]
-        return "\n".join(s for s in sections if s)
+        final_prompt = "\n".join(s for s in sections if s)
+
+        # DEBUG: логируем финальный prompt чтобы видеть что реально идёт в LLM.
+        # Активируется через env NASTYAORC_LOG_PROMPT=1 (не захламляем prod-логи по умолчанию).
+        # Пишем в отдельный файл prompt-{task_id}.log рядом с worker.log.
+        if os.environ.get("NASTYAORC_LOG_PROMPT") == "1":
+            try:
+                log_dir = Path(os.environ.get("WORKER_LOG_DIR", "."))
+                log_dir.mkdir(parents=True, exist_ok=True)
+                tid = task_id or "unknown"
+                log_path = log_dir / f"prompt-{tid}.log"
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(final_prompt)
+                logger.info("DEBUG prompt логирован в %s (%d байт)", log_path, len(final_prompt))
+            except Exception as exc:
+                logger.warning("prompt logging failed: %s", exc)
+
+        return final_prompt
 
     # ------------------------------------------------------------------
     # Параллельная подтяжка внешних контекстов (Fix 4.4A)
