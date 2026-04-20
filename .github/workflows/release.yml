@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Node + фронт идут ПЕРВЫМИ — backend.spec вшивает frontend/dist внутрь .exe,
       # значит фронт должен быть собран ДО PyInstaller.
