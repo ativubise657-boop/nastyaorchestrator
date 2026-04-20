@@ -420,7 +420,21 @@ async def upload_document(
     doc_id = str(uuid.uuid4())
 
     # Безопасное имя файла — оригинальное имя, но с uuid-префиксом во избежание коллизий
-    original_name = file.filename or "upload"
+    raw_name = file.filename or "upload"
+
+    # Clipboard-картинки (is_scratch=true, filename = image.png/image.jpg/image.jpeg)
+    # переименовываем в уникальное clipboard-YYYYMMDD-HHMMSS-{id8}.{ext}.
+    # Причина (fix v36): LLM путается между двумя "image.png" из разных сессий/сообщений
+    # ("у тебя прикреплены две картинки: #1 image.png и #3 image.png"). Уникальное имя
+    # не даёт модели возможности ошибиться. На не-scratch uploads (DocPanel) — не трогаем.
+    from datetime import datetime as _dt
+    if is_scratch and raw_name.lower() in ("image.png", "image.jpg", "image.jpeg", "upload"):
+        ext = Path(raw_name).suffix.lower() or ".png"
+        stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+        original_name = f"clipboard-{stamp}-{doc_id[:8]}{ext}"
+    else:
+        original_name = raw_name
+
     safe_filename = f"{doc_id[:8]}_{original_name}"
     file_path = doc_dir / safe_filename
 

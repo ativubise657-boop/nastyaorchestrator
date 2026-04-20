@@ -350,6 +350,41 @@ class State:
             # executescript создаст их ниже, миграция пройдёт при следующем старте
             pass
 
+        # 12. (v36) Переименовать orphan clipboard-картинки с обобщённым именем
+        # "image.png/jpg/jpeg" — LLM путался между разными image.png в истории.
+        # Новое имя: clipboard-{created_at_compact}-{id[:8]}.{ext}.
+        # Файл на диске тоже переименовываем (path + filename).
+        # Идемпотентно: условие WHERE filename IN (...) отсечёт уже мигрированные.
+        try:
+            rows = conn.execute("""
+                SELECT id, filename, path FROM documents
+                WHERE is_scratch = 1 AND LOWER(filename) IN ('image.png', 'image.jpg', 'image.jpeg', 'upload')
+            """).fetchall()
+            from datetime import datetime as _dt
+            import re as _re
+            for row in rows:
+                doc_id, old_fn, old_path = row[0], row[1], row[2]
+                ext = Path(old_fn).suffix.lower() or ".png"
+                # Берём created_at из строки если есть, иначе now. Но проще — current time.
+                stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+                new_fn = f"clipboard-{stamp}-{doc_id[:8]}{ext}"
+                # Путь на диске: parent_dir/{doc_id[:8]}_{old_fn} → {doc_id[:8]}_{new_fn}
+                old_p = Path(old_path)
+                new_p = old_p.parent / f"{doc_id[:8]}_{new_fn}"
+                try:
+                    if old_p.exists():
+                        old_p.rename(new_p)
+                except OSError as exc:
+                    logger.warning("migration 12: rename %s → %s failed: %s", old_p, new_p, exc)
+                    continue
+                conn.execute(
+                    "UPDATE documents SET filename = ?, path = ? WHERE id = ?",
+                    (new_fn, str(new_p), doc_id)
+                )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
         conn.executescript(self._SCHEMA)
         conn.commit()
         conn.close()
